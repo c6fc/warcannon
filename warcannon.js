@@ -22,9 +22,22 @@ const fs = require('fs');
 const aws = require('aws-sdk');
 const zlib = require('zlib');
 const crypto = require('crypto');
+const progress = require('cli-progress');
 const { exec, fork } = require('child_process');
 const results_filename = hash(warc_file_path) + '-' + this_node + '_of_' + node_count + '.json';
 var last_result_upload = new Date();
+
+const multibar = new progress.MultiBar({
+	format: "{bar} [{value}] ETA: {eta}s {filename}",
+	barsize: 80,
+    clearOnComplete: false,
+    hideCursor: true
+ 
+}, progress.Presets.shades_grey);
+
+var max_records = 150000;
+
+var progress_bars = {};
 
 var s3 = new aws.S3({region: "us-east-1"});
 
@@ -112,6 +125,11 @@ function getWarcPaths() {
 	});
 }
 
+function tail(what, length) {
+	// what = " ".repeat(length) + what;
+	return what.substr(0 - length);
+}
+
 var active_warcs = {};
 function processNextWarc() {
 	var warc = warc_paths.shift();
@@ -123,51 +141,74 @@ function processNextWarc() {
 	}
 
 	var warchash = hash(warc);
-	console.log("[*] Processing ..." + warc.substring(warc.length - 15));
+	//console.log("[*] Processing ..." + warc.substring(warc.length - 15));
 
 	var start_download = new Date();
+	progress_bars[warc] = multibar.create(max_records, 0, {filename: "{inc} " + tail(warc, 24)});
 	active_warcs[warc] = getObjectQuickly(bucket, warc, '/tmp/warcannon/' + warchash).then(() => {
 
 		var end_download = new Date() - start_download;
-		console.log("[+] Downloaded " + warchash + " in " + Math.round(end_download / 1000) + " seconds.");
+		// console.log("[+] Downloaded " + warchash + " in " + Math.round(end_download / 1000) + " seconds.");
+		progress_bars[warc].update(0, {filename: "{" + Math.round(end_download / 1000) + "} " + tail(warc, 24)});
 
 		var start_processing = new Date();
 		fork('./main.js', ['/tmp/warcannon/' + warchash])
 		.on('message', (message) => {
-			// console.log("[+] Completion message received from " + warchash);
-			metrics.total_hits += message.total_hits
 
-			Object.keys(message.regex_hits).forEach((e) => {
-				if (!metrics.regex_hits.hasOwnProperty(e)) {
-					metrics.regex_hits[e] = { domains: {} };
-				}
+			switch (message.type) {
+				case "progress": 
+					message.recordcount = (message.recordcount > max_records) ? max_records : message.recordcount;
+					progress_bars[warc].update(message.recordcount, {
+						filename: tail(warc, 30)
+					});
+				break;
 
-				Object.keys(message.regex_hits[e].domains).forEach((d) => {
-					if (!metrics.regex_hits[e].domains.hasOwnProperty(d)) {
-						metrics.regex_hits[e].domains[d] = [];
-					}
+				case "done":
+					message = message.message;
+					metrics.total_hits += message.total_hits
 
-					message.regex_hits[e].domains[d].forEach((m) => {
-						if (metrics.regex_hits[e].domains[d].indexOf(m) < 0) {
-							metrics.regex_hits[e].domains[d].push(m);
+					Object.keys(message.regex_hits).forEach((e) => {
+						if (!metrics.regex_hits.hasOwnProperty(e)) {
+							metrics.regex_hits[e] = { domains: {} };
 						}
-					})
-					
-				})
 
-				// metrics.regex_hits[e].matches = metrics.regex_hits[e].matches.concat(message.regex_hits[e].matches);
-			});
+						Object.keys(message.regex_hits[e].domains).forEach((d) => {
+							if (!metrics.regex_hits[e].domains.hasOwnProperty(d)) {
+								metrics.regex_hits[e].domains[d] = {
+									"matches": [],
+									"target_uris": []
+								};
+							}
 
-			//fs.writeFileSync(results_filename, JSON.stringify(metrics));
+							message.regex_hits[e].domains[d].matches.forEach((m) => {
+								if (metrics.regex_hits[e].domains[d].matches.indexOf(m) < 0) {
+									metrics.regex_hits[e].domains[d].matches.push(m);
+								}
+							});
 
+							message.regex_hits[e].domains[d].target_uris.forEach((m) => {
+								if (metrics.regex_hits[e].domains[d].target_uris.indexOf(m) < 0) {
+									metrics.regex_hits[e].domains[d].target_uris.push(m);
+								}
+							});
+						})
+					});
+				break;
+
+				default:
+					console.log("Received unexpected IPC message.");
+				break;
+			}
 		})
 		.on('exit', () => {
 			var end_processing = new Date() - start_processing;
-			console.log("[+] Finished processing " + warchash + " after " + Math.round(end_processing / 1000) + " seconds");
+			//console.log("[+] Finished processing " + warchash + " after " + Math.round(end_processing / 1000) + " seconds");
 			fs.unlinkSync('/tmp/warcannon/' + warchash);
 			delete active_warcs[warc];
+			multibar.remove(progress_bars[warc])
+			delete progress_bars[warc];
 			fire();
-		})
+		});
 	});
 }
 
@@ -196,10 +237,11 @@ function fire() {
 
 function finish() {
 	if (timeout == null && Object.keys(active_warcs).length == 0) {
+		multibar.stop();
 		console.log("[+] Warc processing is complete.");
 		putObject(results_bucket, results_filename, JSON.stringify(metrics), "text/json").then(() => {
 			console.log("[+] Results File Uploaded to S3");
-		})
+		});
 		console.log(metrics);
 	}
 }

@@ -23,11 +23,17 @@ const mime_types = [
 
 const regex_patterns = {
 	"access_key_id": /(\'A|"A)(SIA|KIA|IDA|ROA)[JI][A-Z0-9]{14}[AQ][\'"]/g,
-	// "secret_access_key": /"[a-zA-Z0-9/+=]{40}"/g,
 	"user_pool_id": /(us|ap|ca|eu)-(central|east|west|south|northeast|southeast)-(1|2)_[a-zA-Z0-9]{9}/g,
 	"identity_pool_id": /(us|ap|ca|eu)-(central|east|west|south|northeast|southeast)-(1|2):[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/g,
 	"hosted_ui": /"https:\/\/[^ ]+?\/login\?[^ ]*?client_id=[a-z0-9]{26}[^ ]*?"/g,
-	"cognito_domain": /https:\/\/[a-z0-9\-]+\.auth\.(us|ap|ca|eu)-(central|east|west|south|northeast|southeast)-(1|2)\.amazoncognito.com/g
+	"cognito_domain": /https:\/\/[a-z0-9\-]+\.auth\.(us|ap|ca|eu)-(central|east|west|south|northeast|southeast)-(1|2)\.amazoncognito.com/g,
+
+	"assumerolewithwebidentity": /assumeRoleWithWebIdentity\(/,
+
+	"google_appid": /[0-9]{12}-[0-9a-z]{32}\.apps\.googleusercontent\.com/,
+
+	"amazon_appid": /[\'"]amzn1\.application-oa2-client\.[0-9a-f]{32}[\'"]/,
+	"amazon_authorize": /amazon\.Login\.authorize\(/
 };
 
 var metrics = {
@@ -43,6 +49,7 @@ Object.keys(regex_patterns).forEach((e) => {
 
 var records = 0;
 var records_processed = 0;
+var update_timer = null;
 
 parser.on('record', (record) => {
 
@@ -60,17 +67,21 @@ parser.on('record', (record) => {
 				metrics.total_hits++;
 
 				if (!metrics.regex_hits[e].domains.hasOwnProperty(domain)) {
-					metrics.regex_hits[e].domains[domain] = [];
+					metrics.regex_hits[e].domains[domain] = {
+						"matches": [],
+						"target_uris": []
+					};
 				};
 
 				matches.forEach((m) => {
 					if (m !== null) {
-						metrics.regex_hits[e].domains[domain].push(m.trim().replace(/['"]+/g, ""));
+						metrics.regex_hits[e].domains[domain].matches.push(m.trim().replace(/['"]+/g, ""));
 					}
 				})
-				
 
-				// metrics.regex_hits[e].matches = metrics.regex_hits[e].matches.concat(matches);
+				if (metrics.regex_hits[e].domains[domain].target_uris.indexOf(record.warcHeader['WARC-Target-URI']) < 0) {
+					metrics.regex_hits[e].domains[domain].target_uris.push(record.warcHeader['WARC-Target-URI']);
+				}
 			}
 		});
 	}
@@ -79,8 +90,9 @@ parser.on('record', (record) => {
 });
 
 parser.on('done', () => {
+	clearTimeout(update_timer);
 	// console.log(JSON.stringify(metrics));
-	process.send(metrics);
+	process.send({message: metrics, type: "done"});
 
 	var total_mem = 0;
 	var mem = process.memoryUsage();
@@ -90,13 +102,20 @@ parser.on('done', () => {
 
 	var end = new Date() - start;
 
-	console.log("Processed " + records_processed + " of " + records + " records");
-	console.log("Used " + Math.ceil(total_mem / 1024 / 1024) + " MB");
-	console.log("Took %d seconds", (end / 1000));
+	// console.log("Processed " + records_processed + " of " + records + " records");
+	// console.log("Used " + Math.ceil(total_mem / 1024 / 1024) + " MB");
+	// console.log("Took %d seconds", (end / 1000));
 });
 
 parser.on('error', (error) => {
 	console.error(error);
 });
 
+function sendStatusUpdate() {
+	process.send({type: "progress", recordcount: records});
+
+	update_timer = setTimeout(sendStatusUpdate, 1000);
+}
+
 parser.start();
+sendStatusUpdate();
