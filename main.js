@@ -49,7 +49,7 @@ Object.keys(regex_patterns).forEach((e) => {
 
 var records = 0;
 var records_processed = 0;
-var update_timer = null;
+var last_status_report = new Date();
 
 parser.on('record', (record) => {
 
@@ -84,13 +84,17 @@ parser.on('record', (record) => {
 				}
 			}
 		});
+
+		if (records_processed % 100 == 0 && new Date() - last_status_report > 1000) {
+			last_status_report = new Date();
+			process.send({type: "progress", recordcount: records});
+		}
 	}
 
 	return true;
 });
 
 parser.on('done', () => {
-	clearTimeout(update_timer);
 	// console.log(JSON.stringify(metrics));
 	process.send({message: metrics, type: "done"});
 
@@ -111,11 +115,4 @@ parser.on('error', (error) => {
 	console.error(error);
 });
 
-function sendStatusUpdate() {
-	process.send({type: "progress", recordcount: records});
-
-	update_timer = setTimeout(sendStatusUpdate, 1000);
-}
-
 parser.start();
-sendStatusUpdate();

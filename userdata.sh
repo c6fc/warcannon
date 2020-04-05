@@ -16,4 +16,4 @@ git clone https://github.com/c6fc/warcannon.git
 cd warcannon
 npm install
 
-# node warcannon.js s3://commoncrawl/crawl-data/CC-MAIN-2020-10/warc.paths.gz 1 56000 1 s3://warc-results
+# node warcannon.js crawl-data/CC-MAIN-2020-10/warc.paths.gz 1 56000 1 warc-results

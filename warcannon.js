@@ -31,7 +31,7 @@ const multibar = new progress.MultiBar({
 	format: "{bar} [{value}] ETA: {eta}s {filename}",
 	barsize: 80,
     clearOnComplete: false,
-    hideCursor: true
+    hideCursor: false
  
 }, progress.Presets.shades_grey);
 
@@ -132,6 +132,12 @@ function tail(what, length) {
 
 var active_warcs = {};
 function processNextWarc() {
+	
+	if (active_warcs.length >= parallelism) {
+		// Race conditions exist that could put the active > parallelism, so don't do it.
+		return false;
+	}
+
 	var warc = warc_paths.shift();
 
 	if (typeof warc === "undefined") {
@@ -196,12 +202,12 @@ function processNextWarc() {
 				break;
 
 				default:
-					console.log("Received unexpected IPC message.");
+					// console.log("Received unexpected IPC message.");
 				break;
 			}
 		})
 		.on('exit', () => {
-			var end_processing = new Date() - start_processing;
+			// var end_processing = new Date() - start_processing;
 			//console.log("[+] Finished processing " + warchash + " after " + Math.round(end_processing / 1000) + " seconds");
 			fs.unlinkSync('/tmp/warcannon/' + warchash);
 			delete active_warcs[warc];
@@ -209,6 +215,12 @@ function processNextWarc() {
 			delete progress_bars[warc];
 			fire();
 		});
+	}).catch((e) => {
+		// console.log(warc + " download failed; " + e);
+		delete active_warcs[warc];
+		multibar.remove(progress_bars[warc])
+		delete progress_bars[warc];
+		warc_paths.push(warc);
 	});
 }
 
