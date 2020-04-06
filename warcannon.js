@@ -31,18 +31,20 @@ const multibar = new progress.MultiBar({
 	format: "{bar} [{value}] ETA: {eta}s {filename}",
 	barsize: 80,
     clearOnComplete: false,
-    hideCursor: false
+    hideCursor: true
  
 }, progress.Presets.shades_grey);
 
 var max_records = 150000;
 
 var progress_bars = {};
+var total_progress_bar = null;
 
 var s3 = new aws.S3({region: "us-east-1"});
 
 var bucket = "commoncrawl";
 var key = warc_file_path;
+var completed_warc_count = 0;
 
 var metrics = {
 	"total_hits": 0,
@@ -163,6 +165,11 @@ function processNextWarc() {
 
 			switch (message.type) {
 				case "progress": 
+					if (!progress_bars.hasOwnProperty(warc)) {
+						console.log("Dude, seriously?: " + warc);
+						return false;
+					}
+
 					message.recordcount = (message.recordcount > max_records) ? max_records : message.recordcount;
 					progress_bars[warc].update(message.recordcount, {
 						filename: tail(warc, 30)
@@ -213,10 +220,11 @@ function processNextWarc() {
 			delete active_warcs[warc];
 			multibar.remove(progress_bars[warc])
 			delete progress_bars[warc];
+			completed_warc_count++;
 			fire();
 		});
 	}).catch((e) => {
-		// console.log(warc + " download failed; " + e);
+		console.log(warc + " download failed; " + e);
 		delete active_warcs[warc];
 		multibar.remove(progress_bars[warc])
 		delete progress_bars[warc];
@@ -236,6 +244,8 @@ function fire() {
 	for (var a = Object.keys(active_warcs).length; a < parallelism; a++) {
 		processNextWarc();
 	}
+
+	total_progress_bar.update(completed_warc_count);
 
 	if (new Date() - last_result_upload > 30000) {
 		last_result_upload = new Date();
@@ -260,6 +270,7 @@ function finish() {
 
 try {
 	getWarcPaths().then(() => {
+		total_progress_bar = multibar.create(warc_paths.length, 0, {filename: " [Of All WARCs] "});
 		fire();
 	});	
 } catch (e) {
