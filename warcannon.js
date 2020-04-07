@@ -24,11 +24,12 @@ const zlib = require('zlib');
 const crypto = require('crypto');
 const progress = require('cli-progress');
 const { exec, fork } = require('child_process');
-const results_filename = hash(warc_file_path) + '-' + this_node + '_of_' + node_count + '.json';
+var results_filename = hash(warc_file_path) + '-' + this_node + '_of_' + node_count + '.json';
 var last_result_upload = new Date();
+var fire_delay = null;
 
 const multibar = new progress.MultiBar({
-	format: "{bar} [{value}] ETA: {eta}s {filename}",
+	format: "{bar} [{value}] @ {duration_formatted} {filename}",
 	barsize: 80,
     clearOnComplete: false,
     hideCursor: true
@@ -45,6 +46,10 @@ var s3 = new aws.S3({region: "us-east-1"});
 var bucket = "commoncrawl";
 var key = warc_file_path;
 var completed_warc_count = 0;
+var removed_warcs = {
+	"done": [],
+	"fail": []
+};
 
 var metrics = {
 	"total_hits": 0,
@@ -105,26 +110,50 @@ function hash(what) {
 }
 
 function getWarcPaths() {
-	console.log("[*] Retrieving Warc Paths")
+	if (key.indexOf(".gz") > 0) {
+		console.log("[*] Retrieving Warc Paths")
+		return new Promise((success, failure) => {
+			getObject(bucket, key).then((data) => {
+				zlib.gunzip(data, function(err, body) {
+					if (err) {
+						return failure(err);
+					}
 
-	return new Promise((success, failure) => {
-		getObject(bucket, key).then((data) => {
-			zlib.gunzip(data, function(err, body) {
-				if (err) {
-					return failure(err);
-				}
+					warc_paths = body.toString().split("\n");
+					warc_paths.pop();
+					var total_paths = warc_paths.length;
+					var per_node = Math.ceil(warc_paths.length / node_count);
+					warc_paths = warc_paths.slice(per_node * (this_node - 1), per_node * this_node);
+					console.log("[*] Paths retrieved. Processing " + warc_paths.length + " of " + total_paths);
 
-				warc_paths = body.toString().split("\n");
-				warc_paths.pop();
-				var total_paths = warc_paths.length;
-				var per_node = Math.ceil(warc_paths.length / node_count);
-				warc_paths = warc_paths.slice(per_node * (this_node - 1), per_node * this_node);
-				console.log("[*] Paths retrieved. Processing " + warc_paths.length + " of " + total_paths);
-
+					success();
+				});
+			});
+		});
+	} else {
+		console.log("[*] Resuming from previous state...")
+		results_filename = key;
+		var pathsPromise = new Promise((success, failure) => {
+			getObject(results_bucket, key + "-resume").then((data) => {
+				warc_paths = JSON.parse(data);
+				console.log("[*] Paths retrieved. Processing " + warc_paths.length + " remaining Warcs");
 				success();
 			});
-		});	
-	});
+		});
+
+		var metricsPromise = new Promise((success, failure) => {
+			getObject(results_bucket, key).then((data) => {
+				metrics = JSON.parse(data);
+				console.log("[*] Metrics retrieved.");
+				success();
+			});
+		});
+
+		return Promise.all([
+			pathsPromise,
+			metricsPromise
+		]);
+	}
 }
 
 function tail(what, length) {
@@ -166,7 +195,7 @@ function processNextWarc() {
 			switch (message.type) {
 				case "progress": 
 					if (!progress_bars.hasOwnProperty(warc)) {
-						console.log("Dude, seriously?: " + warc);
+						// I guess IPC can fire out-of-order under load?
 						return false;
 					}
 
@@ -214,8 +243,6 @@ function processNextWarc() {
 			}
 		})
 		.on('exit', () => {
-			// var end_processing = new Date() - start_processing;
-			//console.log("[+] Finished processing " + warchash + " after " + Math.round(end_processing / 1000) + " seconds");
 			fs.unlinkSync('/tmp/warcannon/' + warchash);
 			delete active_warcs[warc];
 			multibar.remove(progress_bars[warc])
@@ -224,11 +251,14 @@ function processNextWarc() {
 			fire();
 		});
 	}).catch((e) => {
-		console.log(warc + " download failed; " + e);
+		// console.log(warc + " download failed; " + e);
 		delete active_warcs[warc];
 		multibar.remove(progress_bars[warc])
 		delete progress_bars[warc];
 		warc_paths.push(warc);
+		fire_delay = setTimeout(function() {
+			fire();
+		}, 10000);
 	});
 }
 
@@ -250,6 +280,7 @@ function fire() {
 	if (new Date() - last_result_upload > 30000) {
 		last_result_upload = new Date();
 		putObject(results_bucket, results_filename, JSON.stringify(metrics), "text/json");
+		putObject(results_bucket, results_filename + "-resume", JSON.stringify([].concat(warc_paths, active_warcs)), "text/json");
 	}
 
 	if (warc_paths.length == 0) {

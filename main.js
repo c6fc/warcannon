@@ -95,7 +95,7 @@ parser.on('record', (record) => {
 });
 
 parser.on('done', () => {
-	// console.log(JSON.stringify(metrics));
+	
 	process.send({message: metrics, type: "done"});
 
 	var total_mem = 0;
@@ -105,10 +105,6 @@ parser.on('done', () => {
 	}
 
 	var end = new Date() - start;
-
-	// console.log("Processed " + records_processed + " of " + records + " records");
-	// console.log("Used " + Math.ceil(total_mem / 1024 / 1024) + " MB");
-	// console.log("Took %d seconds", (end / 1000));
 });
 
 parser.on('error', (error) => {
