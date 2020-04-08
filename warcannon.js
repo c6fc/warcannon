@@ -171,9 +171,9 @@ function processNextWarc() {
 
 	var warc = warc_paths.shift();
 
-	if (typeof warc === "undefined") {
+	if (typeof warc !== "string") {
 
-		// If the warclist is empty
+		// If the warclist is empty or if the entry is wonky
 		return false;
 	}
 
