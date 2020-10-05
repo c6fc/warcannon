@@ -1,3 +1,4 @@
+**/.terraform*
 **/node_modules
 *.tf.json
 *settings.json

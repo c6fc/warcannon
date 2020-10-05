@@ -102,11 +102,11 @@ parser.on('done', () => {
 	var total_mem = 0;
 	var mem = process.memoryUsage();
 	for (let key in mem) {
-		console.log(`${key} ${Math.round(mem[key] / 1024 / 1024 * 100) / 100} MB`);
+		// console.log(`${key} ${Math.round(mem[key] / 1024 / 1024 * 100) / 100} MB`);
 		total_mem += mem[key];
 	}
 
-	console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
+	// console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
 
 	var end = new Date() - start;
 });

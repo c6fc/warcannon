@@ -30,7 +30,7 @@ var progress = {};
 
 var s3 = new aws.S3({region: "us-east-1"});
 var ddb = new aws.DynamoDB({region: "us-east-1"});
-var results_key = os.hostname() + "-" + new Date().toString();
+var results_key = os.hostname() + "-" + new Date().toISOString();
 
 var bucket = "commoncrawl";
 var completed_warc_count = 0;
@@ -40,8 +40,7 @@ var metrics = {
 	"regex_hits": {}
 };
 
-//var parallelism = getParallelism(parallelism_factor);
-var parallelism = 1
+var parallelism = getParallelism(parallelism_factor);
 
 function getParallelism(factor) {
 	var cpus = os.cpus().length;
@@ -51,10 +50,10 @@ function getParallelism(factor) {
 	if (cpus * factor > (memory * 2) + 10) {
 		parallelism = Math.floor(cpus * factor);
 	} else {
-		parallelism = Math.floor((memory - 20) / 2);
+		parallelism = Math.floor(memory / 2);
 	}
 
-	console.log(parallelism);
+	console.log("[+] Using parallelism " + parallelism);
 
 	return parallelism;
 }
@@ -85,6 +84,7 @@ let warcQueue = class {
 
 	#sqsMessages = [];
 	#sqsDeleteQueue = [];
+	#sqsProgress = {};
 	#warcListLength = 0;
 
 	constructor(queueUrl, queueTarget) {
@@ -92,6 +92,8 @@ let warcQueue = class {
 		this.#queueTarget = queueTarget;
 		this.#sqs = new aws.SQS({region: "us-east-1"});
 		this.#receiveSqsMessage();
+
+		console.log("[+] WarcQueue started with target [" + queueTarget + "]");
 
 		return this;
 	};
@@ -143,6 +145,10 @@ let warcQueue = class {
 
 	getNextWarcPath = function() {
 		if (!this.#state.populated) {
+			if (!this.#state.receiving) {
+				this.#receiveSqsMessage();
+			}
+
 			return false;
 		}
 
@@ -152,7 +158,6 @@ let warcQueue = class {
 		}
 
 		if (this.#sqsMessages[0].warcs.length == 0) {
-			this.#deleteSqsMessage(this.#sqsMessages[0].receiptHandle);
 			this.#sqsMessages.shift();
 
 			return this.getNextWarcPath();
@@ -177,8 +182,21 @@ let warcQueue = class {
 		Object.keys(this.#callbacks[event]).forEach(function(index) {
 			self.#callbacks[event][index]();
 		});
+	};
 
-		this.#callbacks[event] = {};
+	markWarcComplete = function(warc) {
+		var self = this;
+
+		Object.keys(this.#sqsProgress).forEach(function(i) {
+			if (self.#sqsProgress[i].indexOf(warc) > -1) {
+				self.#sqsProgress[i].splice(self.#sqsProgress[i].indexOf(warc), 1);
+
+				if (self.#sqsProgress[i].length == 0) {
+					delete self.#sqsProgress[i];
+					self.#deleteSqsMessage(i);
+				}
+			}
+		});
 	};
 
 	#receiveSqsMessage = function() {
@@ -187,6 +205,7 @@ let warcQueue = class {
 		}
 
 		this.#state.receiving = true;
+		console.log("[+] Queue is receiving...");
 
 		var self = this;
 		return new Promise((success, failure) => {
@@ -196,7 +215,7 @@ let warcQueue = class {
 			}).promise()
 			.then((data) => {
 				if (!data.hasOwnProperty('Messages')) {
-					console.log("Got empty response from SQS");
+					console.log("[-] Got empty response from SQS. Marking queue exhausted.");
 
 					self.#executeCallbacks('exhausted');
 
@@ -204,6 +223,8 @@ let warcQueue = class {
 					self.#state.receiving = false;
 					return success(false);
 				}
+
+				console.log("[+] Received message from SQS. Adding to queue...");
 
 				data.Messages.forEach(function(message) {
 					var warc_list = [];
@@ -219,6 +240,8 @@ let warcQueue = class {
 						receiptHandle: message.ReceiptHandle,
 						warcs: warc_list
 					});
+
+					self.#sqsProgress[message.ReceiptHandle] = JSON.parse(JSON.stringify(warc_list));
 				});
 
 				self.#warcListLength = self.#getWarcListLength();
@@ -233,8 +256,9 @@ let warcQueue = class {
 					self.#executeCallbacks('populated');
 				}
 
-				// If the queue is less than parallelism * 1.5, preload.
+				// If the queue is less than target, preload.
 				if (self.#getWarcListLength() < self.#queueTarget) {
+					console.log("[*] Preload triggered.");
 					self.#receiveSqsMessage();
 				}
 
@@ -251,7 +275,7 @@ let warcQueue = class {
 function getObjectQuickly(bucket, key, outfile) {
 	return new Promise((success, failure) => {
 		var command = 'aws s3 cp s3://' + bucket + '/' + key + ' ' + outfile;
-		//console.log("Command: " + command);
+		// console.log("Command: " + command);
 		exec('aws s3 cp s3://' + bucket + '/' + key + ' ' + outfile, (error, stdout, stderr) => {
 			if (error) {
 				return failure("CLI Error: " + error);
@@ -289,7 +313,7 @@ function processNextWarc(warc) {
 		return Promise.resolve(false);
 	}
 
-	console.log("Got valid warc " + warc);
+	// console.log("Got valid warc " + warc);
 
 	var warchash = hash(warc);
 	//console.log("[*] Processing ..." + warc.substring(warc.length - 15));
@@ -359,13 +383,15 @@ function processNextWarc(warc) {
 			fs.unlinkSync('/tmp/warcannon/' + warchash);
 			delete active_warcs[warc];
 			delete progress[warc];
+			myQueue.markWarcComplete(warc);
 			completed_warc_count++;
 			fire();
 		});
 	}).catch((e) => {
-		// console.log(warc + " download failed; " + e);
+		console.log(warc + " download failed; " + e);
 		delete active_warcs[warc];
 		delete progress[warc];
+		myQueue.markWarcComplete(warc);
 		failed_warcs.push(warc);
 		fire_delay = setTimeout(function() {
 			fire();
@@ -389,11 +415,22 @@ function uploadResults(what, force = false) {
 };
 
 function reportStatus() {
+
+	var partialWarcs = 0;
+	Object.keys(progress).forEach(function(e) {
+		if (progress[e] > 0) {
+			partialWarcs += progress[e];
+		}
+	});
 	
 	var status = {
 		instanceId: os.hostname(),
 		load: os.loadavg(),
 		progress: progress,
+		completedWarcCount: completed_warc_count,
+		partialWarcCount: completed_warc_count + (partialWarcs / 100),
+		runtime: Math.round((new Date() - warcannon_start) / 1000),
+		warcListLength: myQueue.queueLength(),
 		until: Math.round(new Date() / 1000)
 	};
 
@@ -406,25 +443,32 @@ function reportStatus() {
 		ReturnValues: "NONE"
 	}).promise();
 
-	if (!myQueue.isExhausted()) {
-		setTimeout(reportStatus, 2000);
+	if (!myQueue.isExhausted() || Object.keys(active_warcs).length > 0) {
+		setTimeout(reportStatus, 10000);
 	}
 };
 
 function fire() {
 
-	console.log("Attempting to start " + (parallelism - Object.keys(active_warcs).length) + " warcs");
-	for (var a = Object.keys(active_warcs).length; a < parallelism; a++) {
-		processNextWarc(myQueue.getNextWarcPath());
+	if (!myQueue.isExhausted()) {
+		console.log("Attempting to start " + (parallelism - Object.keys(active_warcs).length) + " warcs");
+		for (var a = Object.keys(active_warcs).length; a < parallelism; a++) {
+			processNextWarc(myQueue.getNextWarcPath());
+		}
 	}
 
-	console.log(Object.keys(active_warcs).length + " warcs now active");
+	let active = Object.keys(active_warcs).length;
+	console.log("[+] " + active + " warcs now active");
+
+	if (active < parallelism) {
+		// setTimeout(fire, 4000); //why is this so hard?
+	}
 
 	let content = JSON.stringify(metrics);
 
 	if (content.length > 250 * 1024 * 1024) {
 		uploadResults(content, true);
-		results_key	= os.hostname() + "-" + new Date().toString();
+		results_key	= os.hostname() + "-" + new Date().toISOString();
 		metrics = {};
 	} else {
 		uploadResults(content);
@@ -443,15 +487,16 @@ function finish() {
 	}
 }
 
+// var myQueue = new warcQueue(sqs_url, Math.ceil(parallelism * 1.5));
+var myQueue = new warcQueue(sqs_url, 2);
+
 try {
-	getParallelism(parallelism_factor);
-	var myQueue = new warcQueue(process.env.QUEUEURL, Math.ceil(parallelism * 1.5));
+
+	reportStatus();
 
 	myQueue.setCallback('populated', 'init', function() {
 		console.log("Populated event fired with [" + myQueue.queueLength() + "] items in queue.");
 		fire();
-
-		setTimeout(reportStatus, 2000);
 	});
 
 	myQueue.setCallback('exhausted', 'init', function() {

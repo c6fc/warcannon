@@ -16,9 +16,9 @@ MEMORY=`free --giga | grep Mem | awk ' { print($2) } '`
 RAMDISK=$((MEMORY / 2))
 echo $RAMDISK
 
-sudo mount -t tmpfs -o size=$RAMDISKg ramdisk /tmp/warcannon
+sudo mount -t tmpfs -o size=${RAMDISK}g ramdisk /tmp/warcannon
 git clone https://github.com/c6fc/warcannon.git
-cd warcannon
+cd warcannon/node.js
 npm install
 
 # node warcannon.js crawl-data/CC-MAIN-2020-10/warc.paths.gz 1 56000 1 warc-results

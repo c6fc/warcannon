@@ -90,7 +90,14 @@ local regionKeys = std.objectFields(settings.regions);
 					Resource: "${aws_s3_bucket.warcannon_results.arn}/*"
 				}, {
 					Effect: "Allow",
-					Action: "dyanmodb:PutItem",
+					Action: [
+						"s3:GetObject",
+						"s3:HeadObject"
+					],
+					Resource: "arn:aws:s3:::commoncrawl/*"
+				}, {
+					Effect: "Allow",
+					Action: "dynamodb:PutItem",
 					Resource: "${aws_dynamodb_table.warcannon_progress.arn}"
 				}, {
 					Effect: "Allow",
