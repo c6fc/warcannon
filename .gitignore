@@ -1,1 +1,7 @@
 **/node_modules
+*.tf.json
+*settings.json
+*regions.json
+*generated-settings.jsonnet
+*spot_request.json
+*userdata.sh
