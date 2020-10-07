@@ -23,6 +23,7 @@ local regionKeys = std.objectFields(settings.regions);
 
 {
 	'backend.tf.json': backend(settings),
+	'cloudfront.tf.json': cloudfront.distribution(settings),
 	'data.tf.json': {
 		data: {
 			aws_caller_identity: {
@@ -64,8 +65,23 @@ local regionKeys = std.objectFields(settings.regions);
 				{
 					enabled: true,
 					attribute_name: "until"
+				},
+				{
+					stream_enabled: true,
+					stream_view_type: "KEYS_ONLY"
 				}
 			)
+		}
+	},
+	'event_source_mapping.tf.json': {
+		resource: {
+			aws_lambda_event_source_mapping: {
+				warcannon_progress: {
+					event_source_arn: "${aws_dynamodb_table.warcannon_progress.stream_arn}",
+					function_name: "${aws_lambda_function.progress_stream_processor.arn}",
+					starting_position: "LATEST"
+				}
+			}
 		}
 	},
 	'iam.tf.json': {
@@ -184,6 +200,62 @@ local regionKeys = std.objectFields(settings.regions);
             ]
         }]
 	}),
+	'lambda_progress_stream_processor.tf.json': lambda.lambda_function("progress_stream_processor", {
+		handler: "main.main",
+		timeout: 5,
+		memory_size: 512,
+
+		environment: {
+			variables: {
+				DESTINATIONBUCKET: "${aws_s3_bucket.static_site.id}"
+			}
+		}
+	}, {
+		statement: [{
+			sid: "s3",
+			actions: [
+				"s3:PutObject"
+			],
+			resources: [
+				"${aws_s3_bucket.static_site.arn}/progress.json"
+			]
+		}, {
+			sid: "dynamodb",
+			actions: [
+				"dynamodb:Scan"
+			],
+			resources: [
+				"${aws_dynamodb_table.warcannon_progress.arn}"
+			]
+		}, {
+			sid: "dynamodbstream",
+			actions: [
+				"dynamodb:DescribeStream",
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+                "dynamodb:ListStreams"
+			],
+			resources: [
+				"${aws_dynamodb_table.warcannon_progress.arn}/stream/*"
+			]
+		}, {
+			sid: "logxray",
+            actions: [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+                "xray:GetSamplingStatisticSummaries",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+            ],
+            resources: [
+                "*"
+            ]
+        }]
+	}),
+	'null_resources.tf.json': null_resources.resource(settings),
 	'provider-aws.tf.json': {
 		provider: [
 			provider.aws_provider(settings.awsProfile, "us-east-1")
@@ -220,6 +292,7 @@ local regionKeys = std.objectFields(settings.regions);
 		resource: {
 			aws_s3_bucket: {
 				warcannon_results: s3.bucket("warcannon-results-"),
+				static_site: s3.bucket("warcannon-site-content-"),
 			}
 		}
 	},
@@ -235,6 +308,16 @@ local regionKeys = std.objectFields(settings.regions);
 							identifiers: ["${aws_iam_role.warcannon_instance_profile.arn}"]
 						}
 					}]
+				},
+				static_site: {
+					statement: [{
+						actions: ["s3:GetObject"],
+						resources: ["${aws_s3_bucket.static_site.arn}/*"],
+						principals: {
+							type: "AWS",
+							identifiers: ["${aws_cloudfront_origin_access_identity.warcannon.iam_arn}"]
+						}
+					}]
 				}
 			}
 		},
@@ -243,6 +326,10 @@ local regionKeys = std.objectFields(settings.regions);
 				warcannon_results: {
 					bucket: "${aws_s3_bucket.warcannon_results.id}",
 					policy: "${data.aws_iam_policy_document.warcannon_results.json}"
+				},
+				static_site: {
+					bucket: "${aws_s3_bucket.static_site.id}",
+					policy: "${data.aws_iam_policy_document.static_site.json}"
 				}
 			}
 		}

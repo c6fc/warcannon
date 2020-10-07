@@ -30,7 +30,10 @@ var progress = {};
 
 var s3 = new aws.S3({region: "us-east-1"});
 var ddb = new aws.DynamoDB({region: "us-east-1"});
-var results_key = os.hostname() + "-" + new Date().toISOString();
+var meta = new aws.MetadataService();
+
+var instance_id = "";
+var results_key = "";
 
 var bucket = "commoncrawl";
 var completed_warc_count = 0;
@@ -41,6 +44,24 @@ var metrics = {
 };
 
 var parallelism = getParallelism(parallelism_factor);
+
+function getInstanceId() {
+	return new Promise((success, failure) => {
+		meta.request('/latest/meta-data/instance-id', {
+			method: "GET"
+		}, function(err, data) {
+			if (err) {
+				console.log("Unable to get instance metadata: " + err);
+				process.exit();
+			}
+
+			console.log("[+] Got instance id: " + data);
+			instance_id = data;
+
+			return success(data);
+		});
+	});
+}
 
 function getParallelism(factor) {
 	var cpus = os.cpus().length;
@@ -424,7 +445,7 @@ function reportStatus() {
 	});
 	
 	var status = {
-		instanceId: os.hostname(),
+		instanceId: instance_id,
 		load: os.loadavg(),
 		progress: progress,
 		completedWarcCount: completed_warc_count,
@@ -468,7 +489,7 @@ function fire() {
 
 	if (content.length > 250 * 1024 * 1024) {
 		uploadResults(content, true);
-		results_key	= os.hostname() + "-" + new Date().toISOString();
+		results_key = instance_id + "_" + new Date().toISOString();
 		metrics = {};
 	} else {
 		uploadResults(content);
@@ -492,15 +513,19 @@ var myQueue = new warcQueue(sqs_url, 2);
 
 try {
 
-	reportStatus();
+	getInstanceId().then(() => {
+		 results_key = instance_id + "_" + new Date().toISOString();
 
-	myQueue.setCallback('populated', 'init', function() {
-		console.log("Populated event fired with [" + myQueue.queueLength() + "] items in queue.");
-		fire();
-	});
+	 	reportStatus();
 
-	myQueue.setCallback('exhausted', 'init', function() {
-		console.log("Exhausted event fired.");
+		myQueue.setCallback('populated', 'init', function() {
+			console.log("Populated event fired with [" + myQueue.queueLength() + "] items in queue.");
+			fire();
+		});
+
+		myQueue.setCallback('exhausted', 'init', function() {
+			console.log("Exhausted event fired.");
+		});
 	});
 
 } catch (e) {

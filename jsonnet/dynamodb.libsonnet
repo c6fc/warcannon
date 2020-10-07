@@ -1,5 +1,5 @@
 {
-	table(name, billing, hash_key, range_key, attributes, gsi, ttl): {
+	table(name, billing, hash_key, range_key, attributes, gsi, ttl, etc = {}): {
 		[name]: std.prune({
 			name: name,
 			billing_mode: billing,
@@ -8,6 +8,6 @@
 			attribute: attributes,
 			global_secondary_index: gsi,
 			ttl: ttl
-		})
+		} + etc)
 	}
 }

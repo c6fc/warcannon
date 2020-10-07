@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>WARCannon Status Page</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="WARCannon status page">
+    <meta name="author" content="">
+
+    <link rel="stylesheet" href="assets/css/bootstrap.min.css">
+    <link rel="stylesheet" href="assets/css/chartist.min.css">
+
+  </head>
+
+  <body ng-app="warcannon" ng-controller="statusCtrl">
+
+    <div class="container">
+
+      <div class="row">
+				<div class="col-12 text-center" ng-show="!loaded">
+					<h3>Loading</h3>
+				</div>
+
+				<div class="col-12 text-center" ng-show="loaded">
+					<h3>Last update: {{ last_progress }}</h3>
+				</div>
+			</div>
+
+			<div class="row">
+      	<div class="col-lg-6 col-6 col-sm-12 border border-secondary" ng-repeat="instance in metrics" ng-show="loaded">
+      		<div class="text-center">
+      			<b>{{ instance.instanceId }}</b>
+      		</div>
+
+      		<div>
+      			<small>
+      				<b>Load:</b>&nbsp;{{ instance.load[0] }}, {{ instance.load[1] }}, {{ instance.load[2] }}
+      				<b>Completed:</b>&nbsp;{{ instance.completedWarcCount }}
+      				<b>Partial:</b>&nbsp;{{ instance.partialWarcCount | number:2 }}
+      				<br>
+      				<b>Work:</b>&nbsp;{{ instance.completedWarcCount + instance.partialWarcCount | number:2 }} warcs in {{ instance.runtime }} seconds
+      				<b>Throughput:</b>&nbsp;{{ instance.runtime / (instance.completedWarcCount + instance.partialWarcCount) | number:2 }}s/ea.
+      			</small>
+      		</div>
+
+      		<div class="ct-chart" id="{{ instance.instanceId }}">
+      		</div>
+      	</div>
+      </div>
+
+    </div> <!-- /container -->
+
+    <!-- jQuery -->
+    <script src="assets/js/jquery.min.js"></script>
+
+
+    <!-- Angular -->
+	<script src="assets/js/angular.min.js"></script>
+	<script src="angular/app.js"></script>
+	<script src="angular/controllers/warcannon.js"></script>
+
+	<!-- Chartist -->
+	<script src="assets/js/chartist.min.js"></script>
+
+  </body>
+</html>
