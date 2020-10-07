@@ -36,10 +36,10 @@
       			<small>
       				<b>Load:</b>&nbsp;{{ instance.load[0] }}, {{ instance.load[1] }}, {{ instance.load[2] }}
       				<b>Completed:</b>&nbsp;{{ instance.completedWarcCount }}
-      				<b>Partial:</b>&nbsp;{{ instance.partialWarcCount | number:2 }}
+      				<b>Partial:</b>&nbsp;{{ instance.partialWarcCount - instance.completedWarcCount | number:2 }}
       				<br>
-      				<b>Work:</b>&nbsp;{{ instance.completedWarcCount + instance.partialWarcCount | number:2 }} warcs in {{ instance.runtime }} seconds
-      				<b>Throughput:</b>&nbsp;{{ instance.runtime / (instance.completedWarcCount + instance.partialWarcCount) | number:2 }}s/ea.
+      				<b>Work:</b>&nbsp;{{ instance.partialWarcCount | number:2 }} warcs in {{ instance.runtime }} seconds
+      				<b>Throughput:</b>&nbsp;{{ instance.runtime / instance.partialWarcCount | number:2 }}s/ea.
       			</small>
       		</div>
 

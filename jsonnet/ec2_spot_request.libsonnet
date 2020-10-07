@@ -1,4 +1,4 @@
-local json(capacity, instanceType, subnets) = {
+local json(capacity, instanceTypes, subnets) = {
     IamFleetRole: "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-ec2-spot-fleet-tagging-role",
     AllocationStrategy: "lowestPrice",
     TargetCapacity: capacity,
@@ -41,7 +41,7 @@ local json(capacity, instanceType, subnets) = {
                 }
             ],
             UserData:: "${base64encode(data.template_file.userdata.rendered)}"
-        }
+        } for instanceType in instanceTypes
     ],
     TagSpecifications: [
         {

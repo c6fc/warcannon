@@ -3,7 +3,7 @@
 	"awsProfile": "default",
 	"debugLambda": true,
 
-	"nodeInstanceType": "m5n.xlarge",	# The instance type to use for compute nodes.
+	"nodeInstanceType": ["m5n.xlarge", "m5dn.xlarge"]	# The instance types to use for compute nodes.
 	"nodeCapacity": 1,		# The number of compute nodes to use when processing data.
 	"nodeParallelism": 1.7,	# The number of warcs to run per-thread on the compute node. 1.7 is a great idea.
 

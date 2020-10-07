@@ -41,6 +41,7 @@ angular
 							labels: labels,
 							series: data,
 						}, {
+							height: (data.length * 10) + 'px',
 							seriesBarDistance: 10,
 							reverseData: true,
 							horizontalBars: true,
