@@ -40,7 +40,7 @@ local json(capacity, instanceTypes, subnets) = {
                     ]
                 }
             ],
-            UserData:: "${base64encode(data.template_file.userdata.rendered)}"
+            UserData: "${base64encode(data.template_file.userdata.rendered)}"
         } for instanceType in instanceTypes
     ],
     TagSpecifications: [

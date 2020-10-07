@@ -329,8 +329,14 @@ function processNextWarc(warc) {
 		return Promise.resolve(false);
 	}
 
-	// If the worc is otherwise wonky.
+	// If the warc is otherwise wonky.
 	if (typeof warc !== "string") {
+		return Promise.resolve(false);
+	}
+
+	// If the warc is already running. This can happen if SQS is populated weirdly.
+	// markWarcComplete should mark common warcs in all messages complete when it finishes.
+	if (progress.hasOwnProperty(warc)) {
 		return Promise.resolve(false);
 	}
 
