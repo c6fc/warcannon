@@ -43,6 +43,8 @@ var metrics = {
 	"regex_hits": {}
 };
 
+var state = "starting";
+
 var parallelism = getParallelism(parallelism_factor);
 
 function getInstanceId() {
@@ -67,11 +69,9 @@ function getParallelism(factor) {
 	var cpus = os.cpus().length;
 	var memory = os.totalmem() / 1024 / 1024 / 1024;
 
-	var parallelism = 0;
-	if (cpus * factor > (memory * 2) + 10) {
+	parallelism = Math.floor(memory / 2);
+	if (cpus * factor < parallelism) {
 		parallelism = Math.floor(cpus * factor);
-	} else {
-		parallelism = Math.floor(memory / 2);
 	}
 
 	console.log("[+] Using parallelism " + parallelism);
@@ -451,14 +451,23 @@ function reportStatus() {
 	});
 	
 	var status = {
+		timestamp: new Date() - 0,
+		parallelism: parallelism,
 		instanceId: instance_id,
 		load: os.loadavg(),
+		memory: {
+			free: os.freemem(),
+			total: os.totalmem()
+		},
 		progress: progress,
+		state: state,
 		completedWarcCount: completed_warc_count,
 		partialWarcCount: completed_warc_count + (partialWarcs / 100),
 		runtime: Math.round((new Date() - warcannon_start) / 1000),
 		warcListLength: myQueue.queueLength(),
-		until: Math.round(new Date() / 1000)
+
+		// Until is set to 5 minutes. This should allow for the spot fleet to cycle without killing the fleet
+		until: Math.round((new Date() / 1000) + 300)
 	};
 
 	console.dir(status, null, 3);
@@ -500,6 +509,17 @@ function fire() {
 	} else {
 		uploadResults(content);
 	}
+
+	if (myQueue.isExhausted() && Object.keys(active_warcs).length == 0) {
+		state = "finished";
+		console.log("[+] All work complete.");
+		uploadResults(content, true).then(() => {
+			console.log("[+] All results uploaded.");
+			setTimeout(function() {
+				reportStatus();
+			}, 10000);
+		});
+	}
 }
 
 function finish() {
@@ -520,16 +540,18 @@ var myQueue = new warcQueue(sqs_url, 2);
 try {
 
 	getInstanceId().then(() => {
-		 results_key = instance_id + "_" + new Date().toISOString();
+		results_key = instance_id + "_" + new Date().toISOString();
 
 	 	reportStatus();
 
 		myQueue.setCallback('populated', 'init', function() {
+			state = "running";
 			console.log("Populated event fired with [" + myQueue.queueLength() + "] items in queue.");
 			fire();
 		});
 
 		myQueue.setCallback('exhausted', 'init', function() {
+			state = "running - exhausted";
 			console.log("Exhausted event fired.");
 		});
 	});

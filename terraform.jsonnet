@@ -106,6 +106,10 @@ local regionKeys = std.objectFields(settings.regions);
 					Resource: "${aws_s3_bucket.warcannon_results.arn}/*"
 				}, {
 					Effect: "Allow",
+					Action: "s3:GetObject",
+					Resource: "${aws_s3_bucket.static_site.arn}/package.zip"
+				}, {
+					Effect: "Allow",
 					Action: [
 						"s3:GetObject",
 						"s3:HeadObject"
@@ -148,7 +152,7 @@ local regionKeys = std.objectFields(settings.regions);
 
 		vpc_config:: {
 			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
-			security_group_ids: ["${aws_security_group.cc_loader.id}"]
+			security_group_ids: ["${aws_security_group.lambda.id}"]
 		},
 
 		environment: {
@@ -202,12 +206,13 @@ local regionKeys = std.objectFields(settings.regions);
 	}),
 	'lambda_progress_stream_processor.tf.json': lambda.lambda_function("progress_stream_processor", {
 		handler: "main.main",
-		timeout: 5,
-		memory_size: 512,
+		timeout: 2,
+		memory_size: 256,
 
 		environment: {
 			variables: {
-				DESTINATIONBUCKET: "${aws_s3_bucket.static_site.id}"
+				DESTINATIONBUCKET: "${aws_s3_bucket.static_site.id}",
+				QUEUEURL: "${aws_sqs_queue.warcannon_queue.id}"
 			}
 		}
 	}, {
@@ -239,6 +244,82 @@ local regionKeys = std.objectFields(settings.regions);
 				"${aws_dynamodb_table.warcannon_progress.arn}/stream/*"
 			]
 		}, {
+			sid: "sqs",
+			actions: [
+				"sqs:GetQueueAttributes"
+			],
+			resources: [
+				"${aws_sqs_queue.warcannon_queue.arn}"
+			]
+		}, {
+			sid: "ec2",
+			actions: [
+				"ec2:CancelSpotFleetRequests",
+				"ec2:DescribeSpotFleetRequests"
+			],
+			resources: [
+				"*"
+			]
+		}, {
+			sid: "logxray",
+            actions: [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+                "xray:GetSamplingStatisticSummaries",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+            ],
+            resources: [
+                "*"
+            ]
+        }]
+	}),
+	'lambda_warcannon.tf.json': lambda.lambda_function("warcannon", {
+		handler: "main.main",
+		timeout: 600,
+		memory_size: 2048,
+
+		environment: {
+			variables: {
+				DESTINATIONBUCKET: "${aws_s3_bucket.warcannon_results.id}"
+			}
+		},
+
+		vpc_config:: {
+			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
+			security_group_ids: ["${aws_security_group.lambda.id}"]
+		}
+	}, {
+		statement: [{
+			sid: "s3",
+			actions: [
+				"s3:PutObject"
+			],
+			resources: [
+				"${aws_s3_bucket.warcannon_results.arn}/*"
+			]
+		}, {
+			sid: "getCommonCrawl",
+			actions: [
+				"s3:GetObject"
+			],
+			resources: [
+				"arn:aws:s3:::commoncrawl/*"
+			]
+		}, {
+			sid: "allowVPCAccess",
+            actions: [
+                "ec2:CreateNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DeleteNetworkInterface"
+            ],
+            resources: [
+            	"*"
+            ]
+        }, {
 			sid: "logxray",
             actions: [
                 "xray:PutTraceSegments",
@@ -256,6 +337,27 @@ local regionKeys = std.objectFields(settings.regions);
         }]
 	}),
 	'null_resources.tf.json': null_resources.resource(settings),
+	'package.tf.json': {
+		resource: {
+			aws_s3_bucket_object: {
+				package: {
+					bucket: "${aws_s3_bucket.static_site.id}",
+					key: "package.zip",
+					source: "${path.module}/lambda_functions/zip_files/package.zip",
+					etag: "${data.archive_file.package.output_md5}"
+				}
+			}
+		},
+		data: {
+			archive_file: {
+				package: {
+					type: "zip",
+					source_dir: "${path.module}/node.js/",
+					output_path: "${path.module}/lambda_functions/zip_files/package.zip",
+				}
+			}
+		}
+	},
 	'provider-aws.tf.json': {
 		provider: [
 			provider.aws_provider(settings.awsProfile, "us-east-1")
@@ -337,15 +439,15 @@ local regionKeys = std.objectFields(settings.regions);
 	'security_groups.tf.json': {
 		resource: {
 			aws_security_group: {
-				cc_loader: vpc.security_group(
-					"cc_loader",
+				lambda: vpc.security_group(
+					"lambda",
 					"us-east-1",
 					"us-east-1",
 					[],
 					[{
 						from_port: 0,
 						to_port: 0,
-						protocol: "all",
+						protocol: "-1",
 						cidr_blocks: ["0.0.0.0/0"]
 					}],
 					null
@@ -436,6 +538,7 @@ local regionKeys = std.objectFields(settings.regions);
 		'${file("${path.module}/node.js/userdata.tpl")}',
 		{
 			results_bucket: "${aws_s3_bucket.warcannon_results.id}",
+			site_bucket: "${aws_s3_bucket.static_site.id}",
 			sqs_queue_url: "${aws_sqs_queue.warcannon_queue.id}",
 			parallelism_factor: settings.nodeParallelism
 		}

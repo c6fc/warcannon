@@ -5,7 +5,7 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash
 export NVM_DIR="$([ -z "$${XDG_CONFIG_HOME-}" ] && printf %s "$${HOME}/.nvm" || printf %s "$${XDG_CONFIG_HOME}/nvm")"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
 
-sudo yum install -y htop git
+sudo yum install -y htop
 
 nvm install 12
 mkdir /tmp/warcannon
@@ -17,8 +17,8 @@ RAMDISK=$((MEMORY / 2))
 echo $RAMDISK
 
 sudo mount -t tmpfs -o size=$${RAMDISK}g ramdisk /tmp/warcannon
-git clone https://github.com/c6fc/warcannon.git
-cd warcannon/node.js
+aws s3 cp s3://${site_bucket}/package.zip .
+unzip package.zip
 npm install
 
 # node warcannon.js crawl-data/CC-MAIN-2020-10/warc.paths.gz 1 56000 1 warc-results

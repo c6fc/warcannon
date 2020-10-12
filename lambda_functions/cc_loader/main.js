@@ -16,7 +16,7 @@ exports.main = function(event, context, callback) {
 	}
 
 	var segmentCount = 0;
-	var maxChunks = event.max || 1000;
+	var maxChunks = event.max || 100000;
 	var chunkSize = event.chunk || 32;
 
 	var promiseError = false;

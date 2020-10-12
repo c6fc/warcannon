@@ -13,7 +13,7 @@
 
   <body ng-app="warcannon" ng-controller="statusCtrl">
 
-    <div class="container">
+    <div class="container-fluid">
 
       <div class="row">
 				<div class="col-12 text-center" ng-show="!loaded">
@@ -21,24 +21,30 @@
 				</div>
 
 				<div class="col-12 text-center" ng-show="loaded">
-					<h3>Last update: {{ last_progress }}</h3>
+					<h3>Last update: {{ progress.generated | momentfn:'fromNow' }}; Queue [{{ progress.sqs.ApproximateNumberOfMessages }}]; In-Flight: [{{ progress.sqs.ApproximateNumberOfMessagesNotVisible }}]</h3>
 				</div>
 			</div>
 
 			<div class="row">
-      	<div class="col-lg-6 col-6 col-sm-12 border border-secondary" ng-repeat="instance in metrics" ng-show="loaded">
+      	<div class="col-xl-3 col-lg-4 col-sm-6 col-12 border border-secondary" ng-repeat="instance in progress.metrics" ng-show="loaded">
       		<div class="text-center">
-      			<b>{{ instance.instanceId }}</b>
+      			<b>{{ instance.instanceId }} @ {{ instance.timestamp | momentfn:'fromNow' }}</b>
       		</div>
 
       		<div>
       			<small>
-      				<b>Load:</b>&nbsp;{{ instance.load[0] }}, {{ instance.load[1] }}, {{ instance.load[2] }}
-      				<b>Completed:</b>&nbsp;{{ instance.completedWarcCount }}
-      				<b>Partial:</b>&nbsp;{{ instance.partialWarcCount - instance.completedWarcCount | number:2 }}
+              <b>State:</b>&nbsp;{{ instance.state }};
+              <br>
+              <b>Queue:</b>&nbsp;{{ instance.warcListLength }};
+              <b>Parallelism:</b>&nbsp;{{ instance.parallelism }};
+              <br>
+      				<b>Load:</b>&nbsp;{{ instance.load[0] }}, {{ instance.load[1] }}, {{ instance.load[2] }};
+      				<b>Completed:</b>&nbsp;{{ instance.completedWarcCount }};
+      				<b>Partial:</b>&nbsp;{{ instance.partialWarcCount - instance.completedWarcCount | number:2 }};
       				<br>
-      				<b>Work:</b>&nbsp;{{ instance.partialWarcCount | number:2 }} warcs in {{ instance.runtime }} seconds
-      				<b>Throughput:</b>&nbsp;{{ instance.runtime / instance.partialWarcCount | number:2 }}s/ea.
+              <b>Memory:</b>&nbsp;{{ instance.memory.free / instance.memory.total * 100 | number:2 }}% free ({{ instance.memory.free / 1024 / 1024 / 1024 | number:2 }}GiB);
+      				<b>Work:</b>&nbsp;{{ instance.partialWarcCount | number:2 }} warcs in {{ instance.runtime }} seconds;
+      				<b>Throughput:</b>&nbsp;{{ instance.runtime / instance.partialWarcCount | number:2 }}s/ea.;
       			</small>
       		</div>
 
@@ -61,9 +67,11 @@
 
 
     <!-- Angular -->
-	<script src="assets/js/angular.min.js"></script>
-	<script src="angular/app.js"></script>
-	<script src="angular/controllers/warcannon.js"></script>
+  	<script src="assets/js/angular.min.js"></script>
+  	<script src="angular/controllers/warcannon.js"></script>
+
+    <!-- Moment -->
+    <script src="assets/js/moment.js"></script>
 
   </body>
 </html>
