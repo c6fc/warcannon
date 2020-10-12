@@ -1,5 +1,6 @@
 **/.terraform*
 **/node_modules
+**/zip_files/*
 *.tf.json
 *settings.json
 *regions.json
