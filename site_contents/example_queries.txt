@@ -1,0 +1,37 @@
+Example queries:
+
+Get all hosted auth pages:
+
+SELECT COUNT(*) as count,
+  warc_filename
+FROM "ccindex"."ccindex"
+WHERE crawl = '{{ crawl }}'
+  AND subset = 'warc'
+  AND url_host_tld = 'com'
+  AND url_host_2nd_last_part = 'amazoncognito'
+  AND url_host_4th_last_part = 'auth'
+GROUP BY warc_filename
+ORDER BY count DESC
+
+
+Get all for a given domain.
+
+SELECT COUNT(*) as count,
+  warc_filename
+FROM "ccindex"."ccindex"
+WHERE crawl = 'CC-MAIN-2020-34'
+  AND subset = 'warc'
+  AND url_host_registered_domain = 'amazoncognito.com'
+GROUP BY warc_filename
+ORDER BY count DESC
+
+
+Search for string in path
+
+SELECT url_host_name,
+  url_path
+FROM "ccindex"."ccindex"
+WHERE crawl = 'CC-MAIN-2020-34'
+  AND subset = 'warc'
+  AND url_host_tld = 'va'
+  AND url_path LIKE '%holysee%'

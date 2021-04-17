@@ -16,7 +16,7 @@ exports.main = function(event, context, callback) {
 	}
 
 	var segmentCount = 0;
-	var maxChunks = event.max || 100000;
+	var maxChunks = event.max || 200000;
 	var chunkSize = event.chunk || 32;
 
 	var promiseError = false;
@@ -115,7 +115,7 @@ exports.main = function(event, context, callback) {
 			}
 		}
 
-		console.log("Created " + sqsPromises.length + " SQS messages");
+		console.log("Created " + sqsPromises.length + " SQS batches");
 
 		return Promise.all(sqsPromises);
 
@@ -130,7 +130,12 @@ exports.main = function(event, context, callback) {
 			return Promise.reject('Skipping due to previous error');
 		}
 
-		return Promise.resolve(callback(null,  "Created " + results.length + " sqs messages of " + segmentCount + " segments in chunks of " + chunkSize));
+		let totalCount = 0;
+		results.forEach((result) => {
+			totalCount += result.Successful.length;
+		});
+
+		return Promise.resolve(callback(null,  "Created " + totalCount + " chunks of " + chunkSize + " from " + segmentCount + " available segments"));
 
 	}, (err) => {
 		promiseError = true;

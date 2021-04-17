@@ -126,6 +126,10 @@ local regionKeys = std.objectFields(settings.regions);
 						"sqs:ReceiveMessage"
 					],
 					Resource: "${aws_sqs_queue.warcannon_queue.arn}"
+				}, {
+					Effect: "Allow",
+					Action: "lambda:GetFunction",
+					Resource: "${aws_lambda_function.warcannon.arn}"
 				}]
 			},
 			[{
@@ -277,7 +281,66 @@ local regionKeys = std.objectFields(settings.regions);
             ]
         }]
 	}),
-	'lambda_warcannon.tf.json': lambda.lambda_function("warcannon", {
+	'lambda_warcannon.tf.json':: lambda.lambda_function("warcannon", {
+		handler: "main.main",
+		timeout: 600,
+		memory_size: 2048,
+
+		environment: {
+			variables: {
+				DESTINATIONBUCKET: "${aws_s3_bucket.warcannon_results.id}"
+			}
+		},
+
+		vpc_config:: {
+			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
+			security_group_ids: ["${aws_security_group.lambda.id}"]
+		}
+	}, {
+		statement: [{
+			sid: "s3",
+			actions: [
+				"s3:PutObject"
+			],
+			resources: [
+				"${aws_s3_bucket.warcannon_results.arn}/*"
+			]
+		}, {
+			sid: "getCommonCrawl",
+			actions: [
+				"s3:GetObject"
+			],
+			resources: [
+				"arn:aws:s3:::commoncrawl/*"
+			]
+		}, {
+			sid: "allowVPCAccess",
+            actions: [
+                "ec2:CreateNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DeleteNetworkInterface"
+            ],
+            resources: [
+            	"*"
+            ]
+        }, {
+			sid: "logxray",
+            actions: [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+                "xray:GetSamplingStatisticSummaries",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+            ],
+            resources: [
+                "*"
+            ]
+        }]
+	}),
+	'lambda_warcannon_singlefire.tf.json': lambda.lambda_function("warcannon", {
 		handler: "main.main",
 		timeout: 600,
 		memory_size: 2048,
@@ -337,7 +400,7 @@ local regionKeys = std.objectFields(settings.regions);
         }]
 	}),
 	'null_resources.tf.json': null_resources.resource(settings),
-	'package.tf.json': {
+	'package.tf.json':: {
 		resource: {
 			aws_s3_bucket_object: {
 				package: {
@@ -535,7 +598,7 @@ local regionKeys = std.objectFields(settings.regions);
 	'template_userdata.tf.json': template.file(
 		"userdata",
 		"userdata.sh",
-		'${file("${path.module}/node.js/userdata.tpl")}',
+		'${file("${path.module}/templates/userdata.tpl")}',
 		{
 			results_bucket: "${aws_s3_bucket.warcannon_results.id}",
 			site_bucket: "${aws_s3_bucket.static_site.id}",

@@ -1,1 +1,26 @@
-../../node.js/package.json
+{
+  "name": "warcannon",
+  "version": "1.0.0",
+  "description": "Parse CommonCrawl en-masse",
+  "main": "warcannon.js",
+  "dependencies": {
+    "aws-sdk": "^2.648.0",
+    "cli-progress": "^3.6.1",
+    "glob": "^7.1.6",
+    "node-warc": "^3.3.1"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/c6fc/warcannon.git"
+  },
+  "author": "Brad Woodward (brad@bradwoodward.io)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/c6fc/warcannon/issues"
+  },
+  "homepage": "https://github.com/c6fc/warcannon#readme"
+}

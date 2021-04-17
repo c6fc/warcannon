@@ -1,0 +1,370 @@
+#! /bin/bash
+
+deploy () {
+	ERR=0;
+	if [[ ! -f $(which jsonnet) ]]; then
+		ERR=1;
+		echo "Error: Must have 'jsonnet' command installed.";
+	fi
+
+	if [[ ! -f $(which jq) ]]; then
+		ERR=1;
+		echo "Error: Must have 'jq' command installed.";
+	fi
+
+	if [[ ! -f $(which aws) ]]; then
+		ERR=1;
+		echo "Error: Must have AWSCLI installed.";
+	fi
+
+	if [[ ! -f $(which npm) ]]; then
+		ERR=1;
+		echo "Error: Must have NPM installed.";
+	fi
+
+	if [[ ! -f $(which terraform) ]]; then
+		ERR=1;
+		echo "Error: Must have Terraform installed.";
+	fi
+
+	if [[ "$(terraform -v | grep v0.11 | wc -l)" != "1" ]]; then
+		ERR=1;
+		echo "Error: Wrong version of Terraform is installed. Warcannon requires Terraform v0.11.";
+	fi
+
+	if [[ "$ERR" == "1" ]]; then
+		echo -e "\nInstall missing components, then try again.\n"
+		exit 1
+	fi
+
+	echo "[*] Preparing to deploy the warcannon"
+
+	if [[ ! -f regions.json ]]; then
+		echo "[*] Getting availabilityzones from AWS"
+		# Get the availability zones for each region
+		echo "[*] - us-east-1"
+		aws --profile $(jq -r '.awsProfile' settings.json) ec2 --region us-east-1 \
+			describe-availability-zones | jq '{"us-east-1": [.AvailabilityZones[] | select(.State=="available") | .ZoneName]}' | jq '{"regions": .}' > regions.json
+	fi
+
+	echo "[*] Checking service-linked roles for EC2 spot fleets"
+	aws --profile $(jq -r '.awsProfile' settings.json) iam get-role --role-name AmazonEC2SpotFleetRole > /dev/null
+	if [[ $? -eq 255 ]]; then
+		echo "[+] Creating service-linked roles for EC2 spot fleets"
+		aws --profile $(jq -r '.awsProfile' settings.json) iam create-role --role-name AmazonEC2SpotFleetRole \
+			--assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Sid":"","Effect":"Allow","Principal":{"Service":"spotfleet.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+		aws --profile $(jq -r '.awsProfile' settings.json) iam attach-role-policy \
+			--policy-arn arn:aws:iam::aws:policy/service-role/AmazonEC2SpotFleetTaggingRole --role-name AmazonEC2SpotFleetRole
+		aws --profile $(jq -r '.awsProfile' settings.json) iam create-service-linked-role --aws-service-name spot.amazonaws.com
+		aws --profile $(jq -r '.awsProfile' settings.json) iam create-service-linked-role --aws-service-name spotfleet.amazonaws.com
+	fi
+
+	echo "[*] Generating combined settings file"
+	jq -s '.[0] * .[1]' settings.json regions.json > generated-settings.jsonnet
+
+	rm *.tf.json
+	echo "[*] Generating Terraform configurations"
+	# Generate terraform configs
+	jsonnet -m . terraform.jsonnet
+
+	# terraform init
+	# terraform apply
+	terraform apply -auto-approve
+}
+
+fire () {
+	AWSACCOUNT=`aws --profile $(jq -r '.awsProfile' settings.json) sts get-caller-identity | jq -r '.Account'`
+	QUEUELENGTH=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 \
+		sqs get-queue-attributes --queue-url "https://sqs.us-east-1.amazonaws.com/${AWSACCOUNT}/warcannon_queue" \
+		--attribute-names ApproximateNumberOfMessages | jq -r '.Attributes.ApproximateNumberOfMessages'`
+
+	if [[ "$QUEUELENGTH" -eq 0 ]]; then
+		echo "Yeah, no tho. Queue length is zero. Populate the queue first."
+		exit 1
+	fi
+
+	VALIDUNTIL=$((`date "+%s"` + `jq -r '.nodeMaxDuration' settings.json`))
+	cat spot_request.json | jq ". += {\"ValidUntil\":$VALIDUNTIL}" > tmp_request.json
+
+	aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 ec2 request-spot-fleet \
+		--spot-fleet-request-config file://tmp_request.json
+	rm tmp_request.json
+}
+
+showBanner () {
+
+	echo "                                                                                                                                                     "
+	echo "     ((((((  /((((   ((((((  ((((((/     ((((((((((*     /(((((((((      @@@@@@     %@@@@@/  &@@@@@ @@@@@@   @@@@@/    @@@@@@@@@*    @@@@@@   @@@@@  "
+	echo "     ((((((  ((((((  (((((  ((((((((     ((((((((((((  (((((((((((*     @@@@@@@&    %@@@@@@% &@@@@@ @@@@@@@  @@@@@/ &@@@@@@@@@@@@@@  @@@@@@@  @@@@@  "
+	echo "      (((((/#(((((( (((((( *(((((((((    (((((/ (((((*((((((           @@@@@@@@@(   %@@@@@@@@&@@@@@ @@@@@@@@*@@@@@/@@@@@@     @@%/****(#%%(***&@@@@  "
+	echo "       ((((((((((((((((((  ((((( (((((   (((((((((((  ((((((          @@@@@ @@@@@*  %@@@@@@@@@@@@@@ @@@@@%@@@@@@@@/@#/****(##(%%%#/********##*@@@@@  "
+	echo "       ((((((((  (((((((/ (((((((((((((  (((((((((((  /(((((((((((   @@@#***(###/% ####**( @@@@@@@# ***/*****/######%%%(***********#(***(& #@@@@@@@  "
+	echo "        ((((((/  #(((((# (((((*   (((((# (((((/ ((((((  ((((((((****###(/########/%/#####%**((****/#*#/#*%*##*************(%***/@%   @@@@@  /@@@@@@  "
+	echo "                                                         **/#(******//((#########**/######/**//***  *# #*********/#***                               "
+	echo "                                                  */#(*(****** ((/*%(****## *###*##**#####%*#(***(#/**#*#*****                   *                   "
+	echo "                                                *#* **********#**#((*%*##( **/##/*#/(*#####%**###****(****                     #                     "
+	echo "                                              **/%*/**/******#**/##%(#/** *#**/##*##***####%/********(##/                    #*                      "
+	echo "                                          */%((*/*(*#*******%%%%*#((#*%** *****/##*##**/####%******%( ###*##           /###(                         "
+	echo "                                         *#(**(#(**(%%%%(*****%%*#*%(*%%#%%%%(**/#/**#**#(####%******/###/*#*###   #*# *             /               "
+	echo "                                      *  %%%%#* * * ####(%#*#%*(*/##**%%%%%%%%#***####/**#*###############*  #/# *# #(          (#                   "
+	echo "                              (/    #  **##*######/####*%/****#*%%%%#***(((((((***/####***#*** ((####*###/(*****#/(###        //                     "
+	echo "                           #/     #* *#*###/#####**####(%***/%%*%%%%%#**/%%%%%%**(*(####********/(###((//(#*   #*##*##/###                           "
+	echo "                         ((      #/ **#*##*(###(*#/###/%%*#/((/*#%%%##*%*(*###******(/######/* /(#((/*******#####*#*   *###(##/                      "
+	echo "                /#      (#*    *###  %*### */(****####*%%* *#%%**%%%#(*%#******#***#####/#** **#*##########*  **(%%%%* #*** (*                       "
+	echo "             #/      *###*### (#/###*%*###******/*####*%%****#%****%%%/%%**** *%******(/**********(##%%%(/**#%#**(%%%(**    *#*       *              "
+	echo "            #/        #(#####*###  *#%*###(##(########/%(*(***%*******((%**(((*%***#/********#((****/(%#(*******#/****(%##* *#*/ *###*       /       "
+	echo "           ( /   (  **#( ####    //*%/################/%(*********************************************(********#*%***%%%%(#*#*  (#((     ###*        "
+	echo "         ##     ####   ##   ###(*/ *%*##*******/%%/* ** * *********************/%/***//##########***%%(##** ***#*%***%/%%##*/#** #(   /#/            "
+	echo "         (     ### *#((   ##    **/########(/*%%#***(#**%%%%%%*****%*#**(***/#%%(%%%%%#(///*****%%%%%%%%##%%#(***%***(*%%%#/***#*## ##(#*   //       "
+	echo "           #   (#( #(     #  *#**/(#%%%%%%#%#%##   ##(**%%##(%****/(#*#***##%%%%%%%%%%%%%%%%%%/%%%%%%#*%**##**%##/****#%%%## **(#* (((    ((         "
+	echo "          #*###     **/#/***#%%%(**** *****/*%#***(##**%%%%%******#**#**(#%************* */#%%%%%%#*((####*******(%(#** %%##**(%#*####*              "
+	echo "         #(***/#******#*#(*#*****/######((*/*/( **####**#*##%***#  (***##(/**#(((########*#*%%%%#****##%(************%%#*((#****#*   (##(##          "
+	echo "       (#%#%%%%%#%%%%%*#**%/***/%%%####%%%*#*#***#(######/*/**/#/*****#%*(*#*(%%#######(*(*%###*(/****#%%%%%%(%%##******%#/****#(#*   #######        "
+	echo "    *#% (%/********%%*//*%*(*(*/********** /*#***/*(##(##/######*** *#** **************** #/#*#****#**/####%%%%#%%#*#(#****%( */(#*##(  /####((      "
+	echo "   ***%*** *****(**%%*#*#/(##/****** ***********/############/##****#(#%%%%%%#/* *********#*#****#*****##****/##%%%%%%%%##****%(*#*  /##  (*#/#      "
+	echo "     ***#***/#(/***%%**(%%%%%%#%%%%%###*****(***#*****####(***** **/* #%%%%%%%%%%%%%%%%%#******#***#***********  (#%%#/***///***(#*   ##  * ##*      "
+	echo "    *###********##(*%**(##%%%#%%%#####/*****(*************/////****/* */#(#####%#######/**//((**/*%*****************(********##****(*     (##        "
+	echo "   ***#########/(** (/ ***/##*####/*********/****############******# ************/((/*****************(####*(##/****%##/***(#%**(*** #####(          "
+	echo "   /(##(####***********#**********//((((((//##***#############***** ////(#######***********************(######(#*###********#**##**#*    ##/         "
+	echo "  *################(*/*****//#################****####((((((((/****###*** *(#####((#/*** **********(##########**#*/*/%%%%#**/*#** /(*(*/##   /       "
+	echo "  */**/########*/*******%#*(*****##*%(*****###*/**#########(*******%#*%*** **#//%******##****#*#########*####*(****%%#***%(*/##*/****#**####*        "
+	echo "  *(#########/***********%*/#/****##*%***** #(#****###########*****##*%/*****#*/%******#********/###########**#***%%***(#*%*#// */******/#           "
+	echo "   *############( **/*(#**#**%**** #(*%*/***/###******************* #* (  ***#(*%******#******(#(###########*#** #%***#*#*%***(*(/*(/*/**#           "
+	echo "    /###########*/*****(******%*****##*%(/*** ###***************** */#*%*****(#*%******#**/(#//########(/##/*#***%%  *#*#*%** (#**/***#**   #/       "
+	echo "    *(###***(##**(((****(**/****%* **/#/*%*/***/###******************(#*%/****#*%#/****#*****/****////(####*(#***%#* (#(*#***********(***  *         "
+	echo "     *(################* *(#*#************** * /**/***** **************(*/****#//%*****#******#############*/#***%#*#(//*#*#** / **#****/            "
+	echo "       *##(######(#(#***** #****%%%**#*(   */***/********************************/******#** **(####*###(*//* #***%%*/#*(%   /#*(#**#****(#           "
+	echo "        *####((#####/**/##****#*******/ * **/********** **** *  ******************************########(#####*##**(%%%%%/* ( #**(#*(***(*             "
+	echo "          *####(#########*(***** (#*//(# ** ****                           ***** ***********((###############*##%**/(***/* #**/****                  "
+	echo "            */(##****(########(#**#***********                               ****************** ###########****(##%*****/***( **                     "
+	echo "                          * *******                                           ******        **/*****############*/###*#(##**                         "
+	echo "                                                                                                      ************** *                               "
+	echo
+	echo .
+}
+
+showCrawlList () {
+	if [[ $# -lt 1 ]]; then
+		echo "Syntax: $0 list <search_string>"
+		echo "Example: $0 list 2021"
+		exit 1
+	fi
+
+	aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3api list-objects-v2 \
+		--bucket commoncrawl --prefix cc-index/collections/ --delimiter "/" | \
+		jq -r '.CommonPrefixes[].Prefix' | cut -d"/" -f 3 | grep $1
+}
+
+showHelp () {
+	echo
+	echo -e "\e[4m>> Usage: $0 <command> [parameters]\e[0m"
+	echo
+	echo
+	echo -e "\e[4m>> Available commands:\e[0m"
+	echo -e "   \e[36mhelp\e[0m"
+	echo "      Shows this menu."
+	echo
+	echo -e "   \e[36mdeploy\e[0m"
+	echo "      Deploys the WARCannon architecture to AWS."
+	echo
+	echo -e "   \e[36mstatus\e[0m"
+	echo "      Shows the status of a WARCannon deployment."
+	echo
+	echo -e "   \e[36mtest <warc_path>\e[0m"
+	echo "      Tests your regular expressions against a single commoncrawl warc."
+	echo
+	echo -e "   \e[36mlist [search_string]\e[0m"
+	echo "      Lists available commoncrawl sets, optionally matching 'search_string'"
+	echo
+	echo -e "   \e[36mpopulate <crawl> [<chunk_size> <num_chunks>]\e[0m"
+	echo "      Populates the warc list with warcs from a matching 'crawl'"
+	echo
+	echo -e "   \e[36mfire\e[0m"
+	echo "      Fires the warcannon"
+	echo
+	echo
+	echo
+	echo -e "\e[4m>> Recommended examples:\e[0m"
+	echo -e "   \e[37m# Deploy WARCannon\e[0m"
+	echo "   $0 deploy"
+	echo "   $0 status"
+	echo
+	echo -e "   \e[37m# Test your deployment\e[0m"
+	echo "   $0 test crawl-data/CC-MAIN-2020-34/segments/1596439735792.85/warc/CC-MAIN-20200803083123-20200803113123-00033.warc.gz"
+	echo
+	echo -e "   \e[37m# Prepare a test job\e[0m"
+	echo "   $0 list 2021"
+	echo "   $0 populate 2021-04 4 10	# Submits only 4 sets of 10 warcs"
+	echo "   $0 fire"
+	echo
+	echo -e "   \e[37m# Prepare a full job\e[0m"
+	echo "   $0 list 2021"
+	echo "   $0 populate 2021-04		# Submits all 60,000 warcs"
+	echo "   $0 fire"
+	echo
+	echo
+}
+
+showStatus () {
+	
+	echo
+	# If warcannon isn't deployed.
+	if [[ ! -f userdata.sh ]]; then
+		echo -e "	Deployed: [ \e[5m\e[31mNO\e[0m ]; Run \e[7m\e[1m$0 deploy\e[0m to get started."
+	else
+		AWSACCOUNT=`aws --profile $(jq -r '.awsProfile' settings.json) sts get-caller-identity | jq -r '.Account'`
+		QUEUELENGTH=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 sqs get-queue-attributes \
+			--queue-url "https://sqs.us-east-1.amazonaws.com/${AWSACCOUNT}/warcannon_queue" \
+			--attribute-names ApproximateNumberOfMessages | jq -r '.Attributes.ApproximateNumberOfMessages'`
+
+		if [[ QUEUELENGTH -eq 0 ]]; then
+			SQSSTATUS="\e[31mEMPTY\e[0m"
+		else
+			SQSSTATUS="$QUEUELENGTH Messages"
+		fi
+
+		STATUSURL=`terraform output cloudfront_url`
+
+		SFRS=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 ec2 describe-spot-fleet-requests \
+			| jq '.SpotFleetRequestConfigs[] | select(.SpotFleetRequestState=="active") | \
+			select((.Tags[]|select(.Key=="Name")|.Value) | match("Warcannon"))'`
+
+		SFRID=`echo $SFRS | jq -r '.SpotFleetRequestId'`;
+		STATUS=`echo $SFRS | jq -r '.SpotFleetRequestState'`;
+		NODES=`cat settings.json | jq -r '.nodeInstanceType | join(", ")'`;
+		CAPACITY=`cat settings.json | jq '.nodeCapacity'`;
+
+		echo -e "	Deployed: [ YES ]; SQS Status: [ $SQSSTATUS ]"
+		if [[ `echo $SFRID | wc -c` -lt 4 ]]; then
+			echo -e "	Job Status: [ \e[31mINACTIVE\e[0m ]"
+		else
+			echo -e "	SFR Status: [ \e[34m${STATUS}\e[0m ] [ \e[34m${SFRID}\e[0m ]"
+			echo -e "	Requested Nodes: [ \e[34m${CAPACITY}\e[0m x \e[34m${NODES}\e[0m ]; "
+		fi
+		
+		echo -e "	Active job url: \e[34mhttps://${STATUSURL}\e[0m"
+	fi
+
+	echo
+}
+
+populateSqs () {
+	if [[ $# -eq 1 ]]; then
+		CRAWL=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3api list-objects-v2 \
+			--bucket commoncrawl --prefix cc-index/collections/ --delimiter "/" | \
+			jq -r '.CommonPrefixes[].Prefix' | cut -d"/" -f 3 | grep $1`
+
+		if [[ `echo $CRAWL | wc -l` -ne 1 ]]; then
+			echo "$1 does not map to a unique crawl; got:\n$CRAWL"
+			exit 1
+		fi
+
+		aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
+			--function-name cc_loader --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
+			--payload "{\"crawl\":\"$CRAWL\"}" /dev/stdout
+
+		exit 0
+	fi
+
+	if [[ $# -eq 3 ]]; then
+		CRAWL=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3api list-objects-v2 \
+			--bucket commoncrawl --prefix cc-index/collections/ --delimiter "/" | \
+			jq -r '.CommonPrefixes[].Prefix' | cut -d"/" -f 3 | grep $1`
+
+		if [[ `echo $CRAWL | wc -l` -ne 1 ]]; then
+			echo "$1 does not map to a unique crawl; got:\n$CRAWL"
+			exit 1
+		fi
+
+		aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
+			--function-name cc_loader --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
+			--payload "{\"crawl\":\"$CRAWL\",\"chunk\":$2,\"max\":$3}" /dev/stdout
+
+		exit 0
+	fi
+
+	echo "'$0 populate' requires either one parameter or three."
+}
+
+testFire () {
+	if [[ "$#" -lt 1 ]]; then
+		echo "You must specify a warc path."
+		echo "e.g. $0 test crawl-data/CC-MAIN-2020-34/segments/1596439735792.85/warc/CC-MAIN-20200803083123-20200803113123-00033.warc.gz"
+		exit 1
+	fi
+
+	echo "[+] Running lambda function. This will typically take about 2.5 minutes. Be patient..."
+	aws --cli-read-timeout 0 --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
+		--function-name warcannon --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
+		--payload "{\"warc\":\"$1\"}" /dev/stdout
+}
+
+verifyStatus () {
+	if [[ -f __/spot_request.json ]]; then
+		echo "You must run this from the warcannon folder."
+		exit 1
+	fi
+
+
+	if [[ ! -f spot_request.json ]]; then
+		echo "You must run terraform first!"
+		exit 1
+	fi
+}
+
+case $1 in
+	deploy | d)
+		showBanner
+		deploy
+		;;
+
+	fire)
+		verifyStatus
+		fire
+		;;
+
+	help | h)
+		showHelp
+		;;
+
+	list | l)
+		showCrawlList $2
+		;;
+
+	populate | p)
+		verifyStatus
+		if [[ $# -eq 2 ]]; then
+			populateSqs $2
+			exit 0
+		fi
+
+		if [[ $# -eq 4 ]]; then
+			populateSqs $2 $3 $4
+			exit 0
+		fi
+
+		echo "[!] 'populate' requires precisely one or three paramters."
+		echo
+		echo "Syntax: $0 populate <unique_string> [<chunk_size> <num_chunks>]"
+		echo "Example (full): $0 populate 2021-04"
+		echo "Example (partial): $0 populate 2021-04 4 10"
+		echo
+
+		exit 1
+		;;
+
+	status | s)
+		showStatus
+		;;
+
+	test | t)
+		verifyStatus
+		testFire
+		;;
+
+	*)
+		showBanner
+		showStatus
+		showHelp
+		;;
+esac

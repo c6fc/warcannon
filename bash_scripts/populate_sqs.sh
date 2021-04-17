@@ -11,4 +11,6 @@ if [[ ! -f spot_request.json ]]; then
 	exit 1
 fi
 
-aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke --function-name cc_loader --payload '{"crawl":"CC-MAIN-2020-34","chunk":2,"max":2}' /dev/stdout
+aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
+	--function-name cc_loader --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
+	--payload '{"crawl":"CC-MAIN-2020-34","chunk":1,"max":3}' /dev/stdout
