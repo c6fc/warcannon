@@ -46,7 +46,10 @@ exports.main = (event, context, callback) => {
 
 		message.sqs = result.Attributes;
 
-		if (terminate || (message.sqs.ApproximateNumberOfMessages == 0 && message.sqs.ApproximateNumberOfMessagesNotVisible == 0)) {
+		// Terminate if all the nodes are exhausted, AND the queue is empty.
+		// This may cause the campaign to terminate while failed warcs are still invisible,
+		// but this is a rare enough occurance that it's better to save the money.
+		if (terminate && message.sqs.ApproximateNumberOfMessages == 0) {
 			return cancelWarcannonSpotFleetRequests();
 		} else {
 			return Promise.resolve();
@@ -82,7 +85,10 @@ function cancelWarcannonSpotFleetRequests() {
 		ec2.describeSpotFleetRequests().promise()
 		.then((data) => {
 			data.SpotFleetRequestConfigs.forEach(function(c) {
-				if (c.SpotFleetRequestState == "active") {
+
+				// Only terminate fleets that have been online for more than 10 minutes.
+				// This prevents nuking new campaigns spun up shortly after others die.
+				if (c.SpotFleetRequestState == "active" && new Date(c.CreateTime).getTime() < Date.now() - 600000 ) {
 					c.Tags.forEach(function(t) {
 						if (t.Key == "Name" && t.Value == "Warcannon") {
 							sfrsToTerminate.push(c.SpotFleetRequestId);

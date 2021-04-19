@@ -233,6 +233,9 @@ showHelp () {
 	echo -e "   \e[36mfire\e[0m"
 	echo "      Fires the WARCannon"
 	echo
+	echo -e "   \e[36msync\e[0m"
+	echo "      Sync WARCannon results from S3 to ./results/"
+	echo
 	echo -e "   \e[36mterminate\e[0m"
 	echo "      Terminates all active spot fleet requests tagged by WARCannon."
 	echo
@@ -308,6 +311,11 @@ showStatus () {
 	fi
 
 	echo
+}
+
+syncResults () {
+	aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3 sync \
+		s3://`terraform output results_bucket`/ ./results/
 }
 
 populateSqs () {
@@ -406,11 +414,11 @@ testFireLocal () {
 		exit 1
 	fi
 
-	rm -f testResults.json
+	rm -f results/testResults.json
 	echo "[*] Invoking function locally."
 	cd lambda_functions/warcannon
 	node -e 'require("./main.js").main({}, {}, console.log)'
-	if [[ $? -eq 0 && -f ../../localResults.json ]]; then
+	if [[ $? -eq 0 && -f ../../results/localResults.json ]]; then
 		echo
 		echo -e "[+] Local test succeeded. Results were stored to \e[34mlocalResults.json"
 	else
@@ -479,6 +487,11 @@ case $1 in
 
 	status | s)
 		showStatus
+		;;
+
+	sync)
+		verifyStatus
+		syncResults
 		;;
 
 	terminate)

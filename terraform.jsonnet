@@ -546,7 +546,7 @@ local regionKeys = std.objectFields(settings.regions);
 			aws_sqs_queue: {
 				warcannon_queue: {
 					name: "warcannon_queue",
-					visibility_timeout_seconds: 420,
+					visibility_timeout_seconds: 900,
 					message_retention_seconds: 86400,
 					redrive_policy: std.manifestJsonEx({
 						deadLetterTargetArn: "${aws_sqs_queue.warcannon_dlq.arn}",

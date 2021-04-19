@@ -128,7 +128,7 @@ exports.main = function(parser) {
 				}
 
 				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
-				fs.writeFileSync('../../localResults.json', JSON.stringify(metrics));
+				fs.writeFileSync('../../results/localResults.json', JSON.stringify(metrics));
 			}
 
 			success(metrics);

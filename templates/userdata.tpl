@@ -13,12 +13,12 @@ nvm install 12
 mkdir /tmp/warcannon
 chmod 777 /tmp/warcannon
 
-# sudo mount -t tmpfs -o size=200g ramdisk /tmp/warcannon
-MEMORY=`free --giga | grep Mem | awk ' { print($2) } '`
-RAMDISK=$((MEMORY / 2))
-echo $RAMDISK
+# # sudo mount -t tmpfs -o size=200g ramdisk /tmp/warcannon
+# MEMORY=`free --mega | grep Mem | awk ' { print($2) } '`
+# RAMDISK=`echo "($MEMORY * 0.6) / 1" | bc`
+# echo $RAMDISK
 
-mount -t tmpfs -o size=$${RAMDISK}g ramdisk /tmp/warcannon
+mount -t tmpfs -o size=80% ramdisk /tmp/warcannon
 wget `aws --region us-east-1 lambda get-function --function-name warcannon | jq -r '.Code.Location'` -O function.zip
 unzip function.zip
 npm install

@@ -71,7 +71,7 @@ function getParallelism(factor) {
 	var cpus = os.cpus().length;
 	var memory = os.totalmem() / 1024 / 1024 / 1024;
 
-	parallelism = Math.floor(memory / 2);
+	parallelism = Math.floor(memory * 0.8 / 1.2);
 	if (cpus * factor < parallelism) {
 		parallelism = Math.floor(cpus * factor);
 	}
@@ -301,6 +301,10 @@ function getObjectQuickly(bucket, key, outfile) {
 		// console.log("Command: " + command);
 		exec('aws s3 cp s3://' + bucket + '/' + key + ' ' + outfile, (error, stdout, stderr) => {
 			if (error) {
+				if (fs.existsSync(outfile)) {
+					fs.unlinkSync(outfile);
+				}
+
 				return failure("CLI Error: " + error);
 			} else {
 				return success();
@@ -535,7 +539,7 @@ function finish() {
 	}
 }
 
-var myQueue = new warcQueue(sqs_url, Math.ceil(parallelism * 1.5));
+var myQueue = new warcQueue(sqs_url, Math.ceil(parallelism * 1));
 // var myQueue = new warcQueue(sqs_url, 1);
 
 try {

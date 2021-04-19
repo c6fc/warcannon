@@ -14,7 +14,7 @@ With WARCannon, you can:
 
 WARCannon leverages clever use of AWS technologies to horizontally scale to any capacity, minimize cost through spot fleets and same-region data transfer, draw from S3 at incredible speeds (up to 100Gbps per node), parallelize across hundreds of CPU cores, report status via DynamoDB and CloudFront, and store results via S3.
 
-In all, WARCannon can process multiple regular expression patterns across 600TB in under an hour for $50.
+In all, WARCannon can process multiple regular expression patterns across 400TB in a few hours for around $100.
 
 ## Installation
 
@@ -30,7 +30,7 @@ WARCannon requires that you have the following installed:
 First, clone the repo and copy the example settings.
 
 ```sh
-$ git clone warcannon .
+$ git clone git@github.com:c6fc/warcannon.git
 $ cd warcannon
 warcannon$ cp settings.json.sample settings.json
 ```
