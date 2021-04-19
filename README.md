@@ -10,6 +10,43 @@ With WARCannon, you can:
 * Scale compute capabilities to asynchronously crunch through WARCs at frankly unreasonable capacity.
 * Store and easily retrieve the results
 
+## How it Works
+
+WARCannon leverages clever use of AWS technologies to horizontally scale to any capacity, minimize cost through spot fleets and same-region data transfer, draw from S3 at incredible speeds (up to 100Gbps per node), parallelize across hundreds of CPU cores, report status via DynamoDB and CloudFront, and store results via S3.
+
+In all, WARCannon can process multiple regular expression patterns across 600TB in under an hour for $50.
+
+## Installation
+
+WARCannon requires that you have the following installed: 
+* **awscli** (v2)
+* **terraform** (v0.11)
+* **jq**
+* **jsonnet**
+* **npm** (v12 or v14)
+
+**ProTip:** To keep things clean and distinct from other things you may have in AWS, it's STRONGLY recommended that you deploy WARCannon in a fresh account. You can create a new account easily from the 'Organizations' console in AWS. **By 'STRONGLY recommended', I mean 'seriously don't install this next to other stuff'.**
+
+First, clone the repo and copy the example settings.
+
+```sh
+$ git clone warcannon .
+$ cd warcannon
+warcannon$ cp settings.json.sample settings.json
+```
+
+Edit `settings.json` to taste:
+
+* `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '&lt;somerandomcharacters&gt;' with random characters to make it unique, or specify another bucket you own.
+* `awsProfile`: The profile name in `~/.aws/credentials` that you want to piggyback on for the installation.
+
+* `nodeInstanceType`: An array of instance types to use for parallel processing. 'm'-types are best for this purpose, and any size can be used. `["m5n.24xlarge", "m5dn.s4xlarge"]` is the recommended value for true campaigns.
+* `nodeCapacity`: The number of nodes to request during parallel processing. This resulting nodes will be an arbitrary distribution of the `nodeInstanceTypes` you specified.
+* `nodeParallelism`: The number of simultaneous WARCs to process *per core*. `1.7` is a good number here. If nodes have insufficient RAM to run at this level of parallelism (as you might encounter with 'c'-type instances, they'll run at the highest safe parallelism instead.
+* `nodeMaxDuration`: The maximum lifespan of compute nodes in seconds. Nodes will be automatically terminated after this time if the job has still not completed. Default value is 24 hours.
+* `sshPubkey`: A public SSH key to facilitate remote access to nodes for troubleshooting.
+* `allowSSHFrom`: A CIDR mask to allow SSH from. Typically this will be `&lt;yourpublicip&gt;/32`
+
 ## Grepping the Internet
 
 WARCannon is fed by [Common Crawl](https://commoncrawl.org/) via the [AWS Open Data](https://registry.opendata.aws/) program. Common Crawl is unique in that the data retrieved by their spiders not only captures website text, but also other text-based content like JavaScript, TypeScript, full HTML, CSS, etc. By constructing suitable Regular Expressions capable of identifying unique components, researchers can identify websites by the technologies they use, and do so without ever touching the website themselves. The problem is that this requires parsing hundreds of terabytes of data, which is a tall order no matter what resources you have at your disposal.
@@ -122,41 +159,3 @@ The response includes a link to your unique status URL, where you can monitor th
 #### Obtaining Results
 
 Results are stored in S3 in JSON format, broken down by each node responsible for producing the results.
-
-
-## How it Works
-
-WARCannon leverages clever use of AWS technologies to horizontally scale to any capacity, minimize cost through spot fleets and same-region data transfer, draw from S3 at incredible speeds (up to 100GGbps per node), parallelize across hundreds of CPU cores, report status via DynamoDB and CloudFront, and store results via S3.
-
-In all, WARCannon can process multiple regular expression patterns across 600TB in under an hour for $50.
-
-## Installation
-
-WARCannon requires that you have the following installed: 
-* **awscli** (v2)
-* **terraform** (v0.11)
-* **jq**
-* **jsonnet**
-* **npm** (v12 or v14)
-
-**ProTip:** To keep things clean and distinct from other things you may have in AWS, it's STRONGLY recommended that you deploy WARCannon in a fresh account. You can create a new account easily from the 'Organizations' console in AWS. **By 'STRONGLY recommended', I mean 'seriously don't install this next to other stuff'.**
-
-First, clone the repo and copy the example settings.
-
-```sh
-$ git clone warcannon .
-$ cd warcannon
-warcannon$ cp settings.json.sample settings.json
-```
-
-Edit `settings.json` to taste:
-
-* `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '&lt;somerandomcharacters&gt;' with random characters to make it unique, or specify another bucket you own.
-* `awsProfile`: The profile name in `~/.aws/credentials` that you want to piggyback on for the installation.
-
-* `nodeInstanceType`: An array of instance types to use for parallel processing. 'm'-types are best for this purpose, and any size can be used. `["m5n.24xlarge", "m5dn.s4xlarge"]` is the recommended value for true campaigns.
-* `nodeCapacity`: The number of nodes to request during parallel processing. This resulting nodes will be an arbitrary distribution of the `nodeInstanceTypes` you specified.
-* `nodeParallelism`: The number of simultaneous WARCs to process *per core*. `1.7` is a good number here. If nodes have insufficient RAM to run at this level of parallelism (as you might encounter with 'c'-type instances, they'll run at the highest safe parallelism instead.
-* `nodeMaxDuration`: The maximum lifespan of compute nodes in seconds. Nodes will be automatically terminated after this time if the job has still not completed. Default value is 24 hours.
-* `sshPubkey`: A public SSH key to facilitate remote access to nodes for troubleshooting.
-* `allowSSHFrom`: A CIDR mask to allow SSH from. Typically this will be `&lt;yourpublicip&gt;/32`

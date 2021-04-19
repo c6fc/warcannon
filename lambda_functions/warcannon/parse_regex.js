@@ -116,7 +116,7 @@ exports.main = function(parser) {
 				
 				Object.keys(regexCost).forEach((e) => {
 					let self = roundAvg(regexCost[e].total, regexCost[e].count);
-					console.log(toFixedLength(e, 20) + " -  Self: " + self + "ns; Of record: " + Math.round(record / self * 100) / 100) + "%";
+					console.log(toFixedLength(e, 20) + " -  Self: " + self + "ns; Of record: " + Math.round(record / self * 100) / 100 + "%");
 				});
 
 				var total_mem = 0;
