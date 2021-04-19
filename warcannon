@@ -62,7 +62,7 @@ deploy () {
 	echo "[*] Generating combined settings file"
 	jq -s '.[0] * .[1]' settings.json regions.json > generated-settings.jsonnet
 
-	rm *.tf.json
+	rm *.tf.json spot_request.json
 	echo "[*] Generating Terraform configurations"
 	# Generate terraform configs
 	jsonnet -m . terraform.jsonnet
@@ -72,7 +72,30 @@ deploy () {
 	terraform apply -auto-approve
 }
 
+emptySqs () {
+	AWSACCOUNT=`aws --profile $(jq -r '.awsProfile' settings.json) sts get-caller-identity | jq -r '.Account'`
+	QUEUELENGTH=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 \
+		sqs get-queue-attributes --queue-url "https://sqs.us-east-1.amazonaws.com/${AWSACCOUNT}/warcannon_queue" \
+		--attribute-names ApproximateNumberOfMessages | jq -r '.Attributes.ApproximateNumberOfMessages'`
+
+	if [[ "$QUEUELENGTH" -eq 0 ]]; then
+		echo "[*] Queue is already empty."
+		exit 1
+	fi
+
+	aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 \
+		sqs purge-queue --queue-url "https://sqs.us-east-1.amazonaws.com/${AWSACCOUNT}/warcannon_queue"
+
+	echo -e "[+] Cleared [ \e[34m${QUEUELENGTH}\e[0m ] messages from the queue";
+}
+
 fire () {
+	if [ settings.json -nt spot_request.json ];  then
+		echo -e "[!] \e[36msettings.json\e[0m has been changed since the last deploy."
+		echo -e "    run \e[34m$0 \e[36mdeploy\e[0m and then try again."
+		exit 1
+	fi
+
 	AWSACCOUNT=`aws --profile $(jq -r '.awsProfile' settings.json) sts get-caller-identity | jq -r '.Account'`
 	QUEUELENGTH=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 \
 		sqs get-queue-attributes --queue-url "https://sqs.us-east-1.amazonaws.com/${AWSACCOUNT}/warcannon_queue" \
@@ -84,11 +107,33 @@ fire () {
 	fi
 
 	VALIDUNTIL=$((`date "+%s"` + `jq -r '.nodeMaxDuration' settings.json`))
+	NODES=`cat settings.json | jq -r '.nodeInstanceType | join(", ")'`;
+	CAPACITY=`cat settings.json | jq '.nodeCapacity'`;
+	DURATION=`cat settings.json | jq '.nodeMaxDuration'`;
+	STATUSURL=`terraform output cloudfront_url`
+
+	echo -e "[!] This will request [ \e[34m${CAPACITY}\e[0m ] spot instances of type [ \e[34m${NODES}\e[0m ]"
+	echo -e "    lasting for [ \e[34m${DURATION}\e[0m ] seconds."
+	echo
+	echo -e "To change this, edit your settings in \e[36msettings.json\e[0m and run \e[34m$0 \e[36mdeploy\e[0m"
+	read -r -p "--> Ready to fire? [Yes]: " key
+
+	if [[ "$key" != "Yes" ]]; then
+		echo "Only 'Yes' will be accepted"
+		echo ""
+
+		exit 1
+	fi
+
 	cat spot_request.json | jq ". += {\"ValidUntil\":$VALIDUNTIL}" > tmp_request.json
 
 	aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 ec2 request-spot-fleet \
 		--spot-fleet-request-config file://tmp_request.json
 	rm tmp_request.json
+
+	echo "[+] Spot fleet request has been sent, and nodes should start coming online within ~5 minutes."
+	echo -e "    Monitor node status and progress at \e[34mhttps://${STATUSURL}\e[0m"
+	echo
 }
 
 showBanner () {
@@ -137,10 +182,10 @@ showBanner () {
 	echo "        *####((#####/**/##****#*******/ * **/********** **** *  ******************************########(#####*##**(%%%%%/* ( #**(#*(***(*             "
 	echo "          *####(#########*(***** (#*//(# ** ****                           ***** ***********((###############*##%**/(***/* #**/****                  "
 	echo "            */(##****(########(#**#***********                               ****************** ###########****(##%*****/***( **                     "
-	echo "                          * *******                                           ******        **/*****############*/###*#(##**                         "
+	echo "                          * *******                <a c6fc project>           ******        **/*****############*/###*#(##**                         "
 	echo "                                                                                                      ************** *                               "
 	echo
-	echo .
+	echo
 }
 
 showCrawlList () {
@@ -170,17 +215,26 @@ showHelp () {
 	echo -e "   \e[36mstatus\e[0m"
 	echo "      Shows the status of a WARCannon deployment."
 	echo
+	echo -e "   \e[36mtestLocal [warc_path]\e[0m"
+	echo "      Tests your regular expressions against a single commoncrawl warc locally. 'warc_path' is only required the first time it's run."
+	echo
 	echo -e "   \e[36mtest <warc_path>\e[0m"
-	echo "      Tests your regular expressions against a single commoncrawl warc."
+	echo "      Tests your regular expressions against a single commoncrawl warc in Lambda."
 	echo
 	echo -e "   \e[36mlist [search_string]\e[0m"
 	echo "      Lists available commoncrawl sets, optionally matching 'search_string'"
 	echo
-	echo -e "   \e[36mpopulate <crawl> [<chunk_size> <num_chunks>]\e[0m"
-	echo "      Populates the warc list with warcs from a matching 'crawl'"
+	echo -e "   \e[36mpopulate <crawl> [<num_chunks> <chunk_size>]\e[0m"
+	echo "      Populates the queue with warcs from a matching 'crawl'"
+	echo
+	echo -e "   \e[36mempty\e[0m"
+	echo "      Purges the SQS queue of all unfinished work."
 	echo
 	echo -e "   \e[36mfire\e[0m"
-	echo "      Fires the warcannon"
+	echo "      Fires the WARCannon"
+	echo
+	echo -e "   \e[36mterminate\e[0m"
+	echo "      Terminates all active spot fleet requests tagged by WARCannon."
 	echo
 	echo
 	echo
@@ -189,7 +243,7 @@ showHelp () {
 	echo "   $0 deploy"
 	echo "   $0 status"
 	echo
-	echo -e "   \e[37m# Test your deployment\e[0m"
+	echo -e "   \e[37m# Test your deployment in Lambda\e[0m"
 	echo "   $0 test crawl-data/CC-MAIN-2020-34/segments/1596439735792.85/warc/CC-MAIN-20200803083123-20200803113123-00033.warc.gz"
 	echo
 	echo -e "   \e[37m# Prepare a test job\e[0m"
@@ -205,6 +259,13 @@ showHelp () {
 	echo
 }
 
+showShortHelp () {
+	echo
+	echo -e "	Usage: \e[34m$0 \e[36m<command> [parameters]\e[0m"
+	echo -e "	Try \e[34m$0 \e[36mhelp\e[0m"
+	echo
+}
+
 showStatus () {
 	
 	echo
@@ -212,6 +273,7 @@ showStatus () {
 	if [[ ! -f userdata.sh ]]; then
 		echo -e "	Deployed: [ \e[5m\e[31mNO\e[0m ]; Run \e[7m\e[1m$0 deploy\e[0m to get started."
 	else
+		echo -ne "	[*] Obtaining service status \e[5m.\e[0m\r"
 		AWSACCOUNT=`aws --profile $(jq -r '.awsProfile' settings.json) sts get-caller-identity | jq -r '.Account'`
 		QUEUELENGTH=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 sqs get-queue-attributes \
 			--queue-url "https://sqs.us-east-1.amazonaws.com/${AWSACCOUNT}/warcannon_queue" \
@@ -234,7 +296,7 @@ showStatus () {
 		NODES=`cat settings.json | jq -r '.nodeInstanceType | join(", ")'`;
 		CAPACITY=`cat settings.json | jq '.nodeCapacity'`;
 
-		echo -e "	Deployed: [ YES ]; SQS Status: [ $SQSSTATUS ]"
+		echo -e "	Deployed: [ \e[34mYES\e[0m ]; SQS Status: [ \e[34m${SQSSTATUS}\e[0m ]"
 		if [[ `echo $SFRID | wc -c` -lt 4 ]]; then
 			echo -e "	Job Status: [ \e[31mINACTIVE\e[0m ]"
 		else
@@ -278,7 +340,7 @@ populateSqs () {
 
 		aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
 			--function-name cc_loader --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
-			--payload "{\"crawl\":\"$CRAWL\",\"chunk\":$2,\"max\":$3}" /dev/stdout
+			--payload "{\"crawl\":\"$CRAWL\",\"chunk\":$3,\"max\":$2}" /dev/stdout
 
 		exit 0
 	fi
@@ -286,7 +348,26 @@ populateSqs () {
 	echo "'$0 populate' requires either one parameter or three."
 }
 
+terminate () {
+	AWSPROFILE=$(jq -r '.awsProfile' settings.json)
+	SFRS=`aws --profile $AWSPROFILE --region us-east-1 ec2 describe-spot-fleet-requests | jq '.SpotFleetRequestConfigs[] | select(.SpotFleetRequestState=="active") | select((.Tags[]|select(.Key=="Name")|.Value) | match("Warcannon")) | .SpotFleetRequestId'`
+
+	if [[ `echo $SFRS | wc -l` -lt 1 ]]; then
+		echo "[*] There are no WARCannon spot fleets to terminate"
+		exit 0
+	fi
+
+	echo $SFRS | awk -v profile=$AWSPROFILE ' { system("aws --profile " profile " --region us-east-1 ec2 cancel-spot-fleet-requests --spot-fleet-request-ids " $1 " --terminate-instances") } '
+	echo -e "[+] Sent termination requests for [ \e[34m`echo $SFRS | wc -l`\e[0m ] WARCannon spot fleet(s)"
+}
+
 testFire () {
+	if [ lambda_function/warcannon/matches.js -nt spot_request.json ];  then
+		echo -e "[!] \e[36mmatches.js\e[0m has been changed since the last deploy."
+		echo -e "    run \e[34m$0 \e[36mdeploy\e[0m and then try again."
+		exit 1
+	fi
+
 	if [[ "$#" -lt 1 ]]; then
 		echo "You must specify a warc path."
 		echo "e.g. $0 test crawl-data/CC-MAIN-2020-34/segments/1596439735792.85/warc/CC-MAIN-20200803083123-20200803113123-00033.warc.gz"
@@ -297,6 +378,47 @@ testFire () {
 	aws --cli-read-timeout 0 --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
 		--function-name warcannon --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
 		--payload "{\"warc\":\"$1\"}" /dev/stdout
+}
+
+testFireLocal () {
+	NODEVERSION=`node --version | cut -d"." -f 1`
+	if [[ "$NODEVERSION" != "v12" && "$NODEVERSION" != "v14" ]]; then
+		echo "[!] Local execution is only tested on node \e[34mv12\e[0m and \e[34mv14\e[0m. Please switch to a supported version and try again."
+		exit 1
+	fi
+
+	if [[ "$#" -lt 1 && ! -f /tmp/warcannon.testLocal ]]; then
+		echo "You must specify a warc path."
+		echo "e.g. $0 testLocal crawl-data/CC-MAIN-2020-34/segments/1596439735792.85/warc/CC-MAIN-20200803083123-20200803113123-00033.warc.gz"
+		exit 1
+	fi
+
+	if [ ! -f /tmp/warcannon.testLocal ]; then
+		echo -e "[*] Downloading warc to \e[36m/tmp/warcannon.testLocal\e[0m."
+		aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3 cp \
+			s3://commoncrawl/$1 /tmp/warcannon.testLocal
+	else
+		echo -e "[*] \e[36m/tmp/warcannon.testLocal\e[0m already exists. Reusing."
+	fi
+
+	if [ ! -f /tmp/warcannon.testLocal ]; then
+		echo "[*] Error downloading warc. Unable to proceed."
+		exit 1
+	fi
+
+	rm -f testResults.json
+	echo "[*] Invoking function locally."
+	cd lambda_functions/warcannon
+	node -e 'require("./main.js").main({}, {}, console.log)'
+	if [[ $? -eq 0 && -f ../../localResults.json ]]; then
+		echo
+		echo -e "[+] Local test succeeded. Results were stored to \e[34mlocalResults.json"
+	else
+		echo
+		echo -e "\e[31m[!] Local test failed."
+	fi
+
+	cd ../../
 }
 
 verifyStatus () {
@@ -316,6 +438,10 @@ case $1 in
 	deploy | d)
 		showBanner
 		deploy
+		;;
+
+	empty)
+		emptySqs
 		;;
 
 	fire)
@@ -349,22 +475,30 @@ case $1 in
 		echo "Example (full): $0 populate 2021-04"
 		echo "Example (partial): $0 populate 2021-04 4 10"
 		echo
-
-		exit 1
 		;;
 
 	status | s)
 		showStatus
 		;;
 
-	test | t)
+	terminate)
 		verifyStatus
-		testFire
+		terminate
+		;;
+
+	test)
+		verifyStatus
+		testFire $2
+		;;
+
+	testLocal)
+		verifyStatus
+		testFireLocal $2
 		;;
 
 	*)
 		showBanner
 		showStatus
-		showHelp
+		showShortHelp
 		;;
 esac

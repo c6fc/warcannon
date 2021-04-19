@@ -10,6 +10,16 @@ const { mime_types, regex_patterns } = require("./matches.js");
 
 exports.main = function(parser) {
 
+	let isLocal = false;
+	let regexStartTime = 0;
+	let recordStartTime = 0;
+	const regexCost = {};
+	const recordCost = { count: 0, total: 0 };
+
+	if (fs.existsSync('/tmp/warcannon.testLocal')) {
+		isLocal = true;
+	}
+
 	return new Promise((success, failure) => {
 		process.send = (typeof process.send == "function") ? process.send : console.log;
 
@@ -39,9 +49,27 @@ exports.main = function(parser) {
 
 			records_processed++;
 
+			if (isLocal) {
+				recordStartTime = hrtime();
+			}
+
 			var domain = record.warcHeader['WARC-Target-URI'].split('/')[2];
 			Object.keys(regex_patterns).forEach((e) => {
+				if (isLocal) {
+					if (!regexCost.hasOwnProperty(e)) {
+						regexCost[e] = { count: 0, total: 0 };
+					}
+
+					regexStartTime = hrtime();
+				}
+
 				var matches = record.content.toString().match(regex_patterns[e]);
+
+				if (isLocal) {
+					regexCost[e].count++
+					regexCost[e].total += hrtime() - regexStartTime;
+				}
+
 				if (matches != null) {
 					metrics.total_hits++;
 
@@ -69,6 +97,11 @@ exports.main = function(parser) {
 				process.send({type: "progress", recordcount: records});
 			}
 
+			if (isLocal) {
+				recordCost.count++
+				recordCost.total += hrtime() - recordStartTime;
+			}
+
 			return true;
 		});
 
@@ -76,16 +109,27 @@ exports.main = function(parser) {
 			
 			process.send({message: metrics, type: "done"});
 
-			var total_mem = 0;
-			var mem = process.memoryUsage();
-			for (let key in mem) {
-				// console.log(`${key} ${Math.round(mem[key] / 1024 / 1024 * 100) / 100} MB`);
-				total_mem += mem[key];
+			if (isLocal) {
+				console.log("--- Performance statistics ---");
+				let record = roundAvg(recordCost.total, recordCost.count);
+				console.log("Average per-record processing time: " + record + "ns");
+				
+				Object.keys(regexCost).forEach((e) => {
+					let self = roundAvg(regexCost[e].total, regexCost[e].count);
+					console.log(toFixedLength(e, 20) + " -  Self: " + self + "ns; Of record: " + Math.round(record / self * 100) / 100) + "%";
+				});
+
+				var total_mem = 0;
+				var mem = process.memoryUsage();
+				console.log("\n--- Memory statistics ---");
+				for (let key in mem) {
+					console.log(`${key} ${Math.round(mem[key] / 1024 / 1024 * 100) / 100} MB`);
+					total_mem += mem[key];
+				}
+
+				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
+				fs.writeFileSync('../../localResults.json', JSON.stringify(metrics));
 			}
-
-			// console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
-
-			var end = new Date() - start;
 
 			success(metrics);
 		});
@@ -99,17 +143,39 @@ function bufferToStream(myBuffer) {
     return tmp;
 }
 
+function roundAvg(total, count, magnitude=1) {
+	return Math.round(total * magnitude / count) / magnitude;
+}
+
+function toFixedLength(what, length) {
+	what = (what.length <= length) ? what : what.substring(0, length - 3).concat('...');
+	while (what.length < length) {
+		what = what.concat(" ");
+	}
+
+	return what;
+}
+
+function hrtime() {
+	let time = process.hrtime();
+	return time[0] * 1000000000 + time[1];
+}
+
 if (process.argv.length == 3) {
-	console.log(process.argv);
+	// console.log(process.argv);
 	let warcFile = process.argv[2];
 	if (!fs.existsSync(warcFile)) {
 		console.log("Usage: " + process.argv[1] + " <file.warc>");
 		process.exit();
 	}
 
-	const warcContent = { Body: fs.readFileSync(warcFile) };
+	/*const warcContent = { Body: fs.readFileSync(warcFile) };
 
 	exports.main(bufferToStream(warcContent.Body)
+				.pipe(zlib.createGunzip())
+				.pipe(new WARCStreamTransform()));*/
+
+	exports.main(fs.createReadStream(warcFile)
 				.pipe(zlib.createGunzip())
 				.pipe(new WARCStreamTransform()));
 }

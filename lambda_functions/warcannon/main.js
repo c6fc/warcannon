@@ -13,25 +13,31 @@ const s3 = new aws.S3({region: "us-east-1"});
 
 exports.main = async function(event, context, callback) {
 
-	if (!event.warc) {
-		return callback("event.warc must be a full path to a warc in the commoncrawl bucket.");
-	}
-
+	let results;
 	let warcContent = {};
+	
 	try {
-		if (fs.existsSync("/tmp/warcannon.50825c10bcad65e3b46895824fc619e48e10742a")) {
-			warcContent = { Body: fs.readFileSync("/tmp/warcannon.50825c10bcad65e3b46895824fc619e48e10742a") }
+		if (fs.existsSync("/tmp/warcannon.testLocal")) {
+			results = await parse_regex.main(
+				fs.createReadStream('/tmp/warcannon.testLocal')
+				.pipe(zlib.createGunzip())
+				.pipe(new WARCStreamTransform()));
+
 		} else {
+			if (!event.warc) {
+				return callback("event.warc must be a full path to a warc in the commoncrawl bucket.");
+			}
+
 			warcContent = await s3.getObject({
 				Bucket: 'commoncrawl',
 				Key: event.warc
 			}).promise();
-		}
 
-		const results = await parse_regex.main(
-			bufferToStream(warcContent.Body)
-				.pipe(zlib.createGunzip())
-				.pipe(new WARCStreamTransform()));
+			results = await parse_regex.main(
+				bufferToStream(warcContent.Body)
+					.pipe(zlib.createGunzip())
+					.pipe(new WARCStreamTransform()));
+		}
 
 		return callback(null, results);
 

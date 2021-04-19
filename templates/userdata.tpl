@@ -1,10 +1,13 @@
 #! /bin/bash
 
+cd /root
+
 # Install NVM
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash
-. ~/.bashrc
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-sudo yum install -y htop jq
+yum install -y htop jq
 
 nvm install 12
 mkdir /tmp/warcannon
@@ -15,7 +18,7 @@ MEMORY=`free --giga | grep Mem | awk ' { print($2) } '`
 RAMDISK=$((MEMORY / 2))
 echo $RAMDISK
 
-sudo mount -t tmpfs -o size=$${RAMDISK}g ramdisk /tmp/warcannon
+mount -t tmpfs -o size=$${RAMDISK}g ramdisk /tmp/warcannon
 wget `aws --region us-east-1 lambda get-function --function-name warcannon | jq -r '.Code.Location'` -O function.zip
 unzip function.zip
 npm install

@@ -1,11 +1,12 @@
 {
-	"backendBucket": "backend-terraform-warcannon-<random>",	# You have to create this bucket manually.
+	"backendBucket": "backend-terraform-warcannon-<random>",
 	"awsProfile": "default",
 	"debugLambda": true,
 
-	"nodeInstanceType": ["m5n.xlarge", "m5dn.xlarge"]	# The instance types to use for compute nodes.
-	"nodeCapacity": 1,		# The number of compute nodes to use when processing data.
-	"nodeParallelism": 1.7,	# The number of warcs to run per-thread on the compute node. 1.7 is a great idea.
+	"nodeInstanceType": ["m5n.xlarge", "m5dn.xlarge"],
+	"nodeCapacity": 1,
+	"nodeParallelism": 1.7,
+	"nodeMaxDuration": 86400,
 
 	"sshPubkey": "ssh-rsa whataver you@yourhost",
 	"allowSSHFrom": "8.8.8.8/32"

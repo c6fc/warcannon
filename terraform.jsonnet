@@ -459,6 +459,11 @@ local regionKeys = std.objectFields(settings.regions);
 				warcannon_results: s3.bucket("warcannon-results-"),
 				static_site: s3.bucket("warcannon-site-content-"),
 			}
+		},
+		output: {
+			results_bucket: {
+				value: "${aws_s3_bucket.warcannon_results.id}"
+			}
 		}
 	},
 	's3_policies.tf.json': {
