@@ -40,9 +40,9 @@ Edit `settings.json` to taste:
 * `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '&lt;somerandomcharacters&gt;' with random characters to make it unique, or specify another bucket you own.
 * `awsProfile`: The profile name in `~/.aws/credentials` that you want to piggyback on for the installation.
 
-* `nodeInstanceType`: An array of instance types to use for parallel processing. 'm'-types are best for this purpose, and any size can be used. `["m5n.24xlarge", "m5dn.s4xlarge"]` is the recommended value for true campaigns.
-* `nodeCapacity`: The number of nodes to request during parallel processing. This resulting nodes will be an arbitrary distribution of the `nodeInstanceTypes` you specified.
-* `nodeParallelism`: The number of simultaneous WARCs to process *per core*. `1.7` is a good number here. If nodes have insufficient RAM to run at this level of parallelism (as you might encounter with 'c'-type instances, they'll run at the highest safe parallelism instead.
+* `nodeInstanceType`: An array of instance types to use for parallel processing. 'c'-types are best value for this purpose, and any size can be used. `["c5n.18xlarge"]` is the recommended value for true campaigns.
+* `nodeCapacity`: The number of nodes to request during parallel processing. The resulting nodes will be an arbitrary distribution of the `nodeInstanceTypes` you specify.
+* `nodeParallelism`: The number of simultaneous WARCs to process *per vCPU*. `2` is a good number here. If nodes have insufficient RAM to run at this level of parallelism (as you might encounter with 'c'-type instances), they'll run at the highest safe parallelism instead.
 * `nodeMaxDuration`: The maximum lifespan of compute nodes in seconds. Nodes will be automatically terminated after this time if the job has still not completed. Default value is 24 hours.
 * `sshPubkey`: A public SSH key to facilitate remote access to nodes for troubleshooting.
 * `allowSSHFrom`: A CIDR mask to allow SSH from. Typically this will be `&lt;yourpublicip&gt;/32`
@@ -75,6 +75,28 @@ WARCannon will then download the warc and parse it with your configured matches.
 On top of everything else, WARCannon will attempt to evalutate the total compute cost of your regular expressions when run locally. This way, you can be informed if a given regular expression will significantly impact performance *before* you execute your campaign.
 
 ![Image](http://c6fc.io/warcannon-dev.png)
+
+### Performing Custom Processing
+
+Sometimes a simple regex pattern isn't sufficient on its own, and you need some additional steps to ensure you're returning the right information. In this case, simply adding a function to the `exports.custom_functions` object with the same key name allows you to perform any additional processing you see fit.
+
+```javascript
+exports.regex_patterns = {
+	"access_key_id": /(\'A|"A)(SIA|KIA|IDA|ROA)[JI][A-Z0-9]{14}[AQ][\'"]/g,
+};
+
+exports.custom_functions = {
+	"access_key_id": function(match) {
+		// Ignore matches with 'EXAMPLE' in the text, since this is common for documentation.
+		if (match.text(/EXAMPLE/) != null) {
+			// Returning a boolean 'false' discards the match.
+			return false
+		}
+	}
+}
+```
+
+**Note: WARCannon is meant to crunch through text at stupid speeds.** While it's certainly *possible* to perform any type of operation you'd like, adding high-latency custom functions such as network calls can significantly increase processing time and costs. Network calls could also result in LOTS of calls against a website, which could get you in trouble. Be smart about how you use these functions.
 
 ### Performing a One-Off Test in AWS
 

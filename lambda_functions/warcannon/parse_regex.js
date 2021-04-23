@@ -6,7 +6,7 @@ const fs = require("fs");
 const zlib = require('zlib')
 const { Duplex } = require('stream');
 const { WARCStreamTransform } = require('node-warc');
-const { mime_types, regex_patterns } = require("./matches.js");
+const { mime_types, regex_patterns, custom_functions } = require("./matches.js");
 
 exports.main = function(parser) {
 
@@ -63,11 +63,23 @@ exports.main = function(parser) {
 					regexStartTime = hrtime();
 				}
 
-				var matches = record.content.toString().match(regex_patterns[e]);
+				let matches = record.content.toString().match(regex_patterns[e]);
 
 				if (isLocal) {
 					regexCost[e].count++
 					regexCost[e].total += hrtime() - regexStartTime;
+				}
+
+				if (matches != null && custom_functions.hasOwnProperty(e)) {
+					let customMatches = [];
+					matches.forEach((match) => {
+						let customMatch = custom_functions[e](match);
+						if (customMatch != false) {
+							customMatches.push(customMatch);
+						}
+					});
+
+					matches = (customMatches.length > 0) ? customMatches : null;
 				}
 
 				if (matches != null) {
@@ -114,10 +126,14 @@ exports.main = function(parser) {
 				let record = roundAvg(recordCost.total, recordCost.count);
 				console.log("Average per-record processing time: " + record + "ns");
 				
+				let totalRegexCost = 0;
 				Object.keys(regexCost).forEach((e) => {
 					let self = roundAvg(regexCost[e].total, regexCost[e].count);
-					console.log(toFixedLength(e, 20) + " -  Self: " + self + "ns; Of record: " + Math.round(record / self * 100) / 100 + "%");
+					totalRegexCost += self;
+					console.log(toFixedLength(e, 20) + " -  Self: " + self + "ns; Of record: " + Math.round(self / record * 10000) / 100 + "%");
 				});
+
+				console.log("Per-record overhead: " + Math.round((record - totalRegexCost) / record * 10000) / 100 + "%");
 
 				var total_mem = 0;
 				var mem = process.memoryUsage();

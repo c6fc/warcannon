@@ -72,6 +72,15 @@ deploy () {
 	terraform apply -auto-approve
 }
 
+clearResults () {
+
+	RESULTCOUNT=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3 ls s3://$(terraform output results_bucket) | wc -l`
+	aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 \
+		s3 rm s3://`terraform output results_bucket` --recursive
+
+	echo -e "[+] Deleted [ \e[34m$RESULTCOUNT\e[0m ] files from S3."
+}
+
 emptySqs () {
 	AWSACCOUNT=`aws --profile $(jq -r '.awsProfile' settings.json) sts get-caller-identity | jq -r '.Account'`
 	QUEUELENGTH=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 \
@@ -92,6 +101,12 @@ emptySqs () {
 fire () {
 	if [ settings.json -nt spot_request.json ];  then
 		echo -e "[!] \e[36msettings.json\e[0m has been changed since the last deploy."
+		echo -e "    run \e[34m$0 \e[36mdeploy\e[0m and then try again."
+		exit 1
+	fi
+
+	if [ lambda_function/warcannon/matches.js -nt spot_request.json ];  then
+		echo -e "[!] \e[36mmatches.js\e[0m has been changed since the last deploy."
 		echo -e "    run \e[34m$0 \e[36mdeploy\e[0m and then try again."
 		exit 1
 	fi
@@ -227,14 +242,17 @@ showHelp () {
 	echo -e "   \e[36mpopulate <crawl> [<num_chunks> <chunk_size>]\e[0m"
 	echo "      Populates the queue with warcs from a matching 'crawl'"
 	echo
-	echo -e "   \e[36mempty\e[0m"
+	echo -e "   \e[36memptyQueue\e[0m"
 	echo "      Purges the SQS queue of all unfinished work."
 	echo
 	echo -e "   \e[36mfire\e[0m"
 	echo "      Fires the WARCannon"
 	echo
-	echo -e "   \e[36msync\e[0m"
+	echo -e "   \e[36msyncResults\e[0m"
 	echo "      Sync WARCannon results from S3 to ./results/"
+	echo
+	echo -e "   \e[36mclearResults\e[0m"
+	echo "      Delete WARCannon results from S3"
 	echo
 	echo -e "   \e[36mterminate\e[0m"
 	echo "      Terminates all active spot fleet requests tagged by WARCannon."
@@ -319,15 +337,23 @@ syncResults () {
 }
 
 populateSqs () {
-	if [[ $# -eq 1 ]]; then
-		CRAWL=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3api list-objects-v2 \
-			--bucket commoncrawl --prefix cc-index/collections/ --delimiter "/" | \
-			jq -r '.CommonPrefixes[].Prefix' | cut -d"/" -f 3 | grep $1`
 
-		if [[ `echo $CRAWL | wc -l` -ne 1 ]]; then
-			echo "$1 does not map to a unique crawl; got:\n$CRAWL"
-			exit 1
-		fi
+	CRAWL=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3api list-objects-v2 \
+		--bucket commoncrawl --prefix cc-index/collections/ --delimiter "/" | \
+		jq -r '.CommonPrefixes[].Prefix' | cut -d"/" -f 3 | grep $1`
+
+	if [[ `echo $CRAWL | wc -c` -lt 4 ]]; then
+		echo "$1 does not map to any crawl. Try 'list' first."
+		exit 1
+	fi
+
+	if [[ `echo $CRAWL | wc -l` -gt 1 ]]; then
+		echo "$1 does not map to a unique crawl; got:"
+		echo "$CRAWL"
+		exit 1
+	fi
+
+	if [[ $# -eq 1 ]]; then
 
 		aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
 			--function-name cc_loader --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
@@ -337,14 +363,6 @@ populateSqs () {
 	fi
 
 	if [[ $# -eq 3 ]]; then
-		CRAWL=`aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 s3api list-objects-v2 \
-			--bucket commoncrawl --prefix cc-index/collections/ --delimiter "/" | \
-			jq -r '.CommonPrefixes[].Prefix' | cut -d"/" -f 3 | grep $1`
-
-		if [[ `echo $CRAWL | wc -l` -ne 1 ]]; then
-			echo "$1 does not map to a unique crawl; got:\n$CRAWL"
-			exit 1
-		fi
 
 		aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
 			--function-name cc_loader --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
@@ -420,7 +438,7 @@ testFireLocal () {
 	node -e 'require("./main.js").main({}, {}, console.log)'
 	if [[ $? -eq 0 && -f ../../results/localResults.json ]]; then
 		echo
-		echo -e "[+] Local test succeeded. Results were stored to \e[34mlocalResults.json"
+		echo -e "[+] Local test succeeded. Results were stored to \e[34m./results/localResults.json"
 	else
 		echo
 		echo -e "\e[31m[!] Local test failed."
@@ -448,8 +466,14 @@ case $1 in
 		deploy
 		;;
 
-	empty)
+	emptyQueue)
+		verifyStatus
 		emptySqs
+		;;
+
+	clearResults)
+		verifyStatus
+		clearResults
 		;;
 
 	fire)
@@ -489,7 +513,7 @@ case $1 in
 		showStatus
 		;;
 
-	sync)
+	syncResults)
 		verifyStatus
 		syncResults
 		;;
