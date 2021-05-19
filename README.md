@@ -37,7 +37,7 @@ warcannon$ cp settings.json.sample settings.json
 
 Edit `settings.json` to taste:
 
-* `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '&lt;somerandomcharacters&gt;' with random characters to make it unique, or specify another bucket you own.
+* `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '<somerandomcharacters>' with random characters to make it unique, or specify another bucket you own.
 * `awsProfile`: The profile name in `~/.aws/credentials` that you want to piggyback on for the installation.
 
 * `nodeInstanceType`: An array of instance types to use for parallel processing. 'c'-types are best value for this purpose, and any size can be used. `["c5n.18xlarge"]` is the recommended value for true campaigns.
@@ -151,6 +151,44 @@ warcannon$ ./warcannon populate 2021-04
 }
 ```
 
+#### Populating the Queue via Athena
+
+During deployment, WARCannon automatically provisions a database (warcannon_commoncrawl) and workgroup (warcannon) in Athena that can be used to rapidly query information from CommonCrawl. This can be especially useful for populating sparse campaigns based on certain queries. For example, the following query will search for WARCs that contain responses from 'example.com'
+
+```sql
+SELECT
+	warc_filename,
+	COUNT(url_path) as num
+FROM
+	warcannon_commoncrawl.ccindex
+WHERE
+	subset = 'warc'	AND
+	url_host_registered_domain IN ('example.com') AND
+	crawl = 'CC-MAIN-2021-04'
+GROUP BY warc_filename
+ORDER BY num DESC
+```
+
+You can use the Athena console to fine-tune your results, but you must run the query from the WARCannon command line if you intend to populate a job with it:
+
+```bash
+./warcannon queryAthena "SELECT warc_filename, COUNT(url_path) as num FROM warcannon_commoncrawl.ccindex WHERE subset = 'warc' AND url_host_registered_domain IN ('example.com') AND crawl = 'CC-MAIN-2021-04' GROUP BY warc_filename ORDER BY num DESC"
+
+[+] Query Exec Id: 0319486e-1846-491c-badf-2e23ae213974 .. SUCCEEDED
+
+```
+
+WARCannon can then use the results of a query to populate the queue, and does so based on the `warc_filename` column from the resultset. As such, it's recommended that you either `group by` this column or use `distinct()` to avoid duplicates. WARCannon will throw an error if this field isn't present. Populate the queue with Athena results by passing the Query Execution ID to the `populateAthena` command.
+
+```bash
+./warcannon populateAthena 0319486e-1846-491c-badf-2e23ae213974
+
+{Created 26 chunks of 10 from 251 available segments"
+    "StatusCode": 200,
+    "ExecutedVersion": "$LATEST"
+}
+```
+
 #### Firing the WARCannon
 
 With the queue populated, we're ready to fire. WARCannon will do a few sanity checks to ensure everything is in order, then show you the configuration of the campaign and give you one last opportunity to abort before you finalize the order.
@@ -170,6 +208,7 @@ Pull the trigger by responding with 'Yes'.
 {
     "SpotFleetRequestId": "sfr-03dd32b8-51f7-4c8e-802b-a702fc3c8c95"
 }
+
 [+] Spot fleet request has been sent, and nodes should start coming online within ~5 minutes.
     Monitor node status and progress at https://d201offlnmhkmd.cloudfront.net
 ```
@@ -180,4 +219,25 @@ The response includes a link to your unique status URL, where you can monitor th
 
 #### Obtaining Results
 
-Results are stored in S3 in JSON format, broken down by each node responsible for producing the results.
+WARCannon results are stored in S3 in JSON format, broken down by each node responsible for producing the results. Athena results are stored in the same bucket under the `/athena/` prefix. You can sync the results of a campaign to the `./warcannon/results/` folder on your local machine using the `syncResults` command.
+
+```bash
+./warcannon syncResults
+
+sync: s3://warcannon-results-202...
+sync: s3://warcannon-results-202...
+sync: s3://warcannon-results-202...
+...
+```
+
+You can then empty the results buckets with `clearResults`
+
+```bash
+./warcannon clearResults
+
+delete: s3://warcannon-results-202...
+delete: s3://warcannon-results-202...
+delete: s3://warcannon-results-202...
+...
+[+] Deleted [ 21 ] files from S3.
+```
