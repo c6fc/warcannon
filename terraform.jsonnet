@@ -22,6 +22,50 @@ local ec2_spot_request = import 'jsonnet/ec2_spot_request.libsonnet';
 local regionKeys = std.objectFields(settings.regions);
 
 {
+	'athena.tf.json': {
+		resource: {
+			aws_athena_database: {
+				warcannon_commoncrawl: {
+					name: "warcannon_commoncrawl",
+					bucket: "${aws_s3_bucket.warcannon_results.id}",
+					force_destroy: true
+				}
+			},
+			aws_athena_workgroup: {
+				warcannon: {
+					name: "warcannon",
+					configuration: {
+						result_configuration: {
+							output_location: "s3://${aws_s3_bucket.warcannon_results.bucket}/athena/"
+						}
+					}
+				}
+			},
+			null_resource: {
+				athena_populate: {
+					triggers: {
+						new_database: "${aws_athena_database.warcannon_commoncrawl.name}"
+					},
+
+					provisioner: [{
+						"local-exec": {
+							command: "./populate_athena.sh"
+						}
+					}],
+
+					depends_on: [ "aws_athena_database.warcannon_commoncrawl", "aws_athena_workgroup.warcannon" ]
+				}
+			}
+		},
+		output: {
+			athena_table: {
+				value: "${aws_athena_database.warcannon_commoncrawl.name}"
+			},
+			athena_workgroup: {
+				value: "${aws_athena_workgroup.warcannon.id}"
+			}
+		}
+	},
 	'backend.tf.json': backend(settings),
 	'cloudfront.tf.json': cloudfront.distribution(settings),
 	'data.tf.json': {
@@ -149,6 +193,74 @@ local regionKeys = std.objectFields(settings.regions);
 			}
 		}
 	},
+	'lambda_cc_athena_loader.tf.json': lambda.lambda_function("cc_athena_loader", {
+		handler: "main.main",
+		timeout: 30,
+		memory_size: 1024,
+
+		vpc_config:: {
+			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
+			security_group_ids: ["${aws_security_group.lambda.id}"]
+		},
+
+		environment: {
+			variables: {
+				QUEUEURL: "${aws_sqs_queue.warcannon_queue.id}",
+				BUCKET: "${aws_s3_bucket.warcannon_results.id}"
+			}
+		}
+	}, {
+		statement: [{
+			sid: "sqs",
+			actions: [
+				"sqs:SendMessage"
+			],
+			resources: [
+				"${aws_sqs_queue.warcannon_queue.arn}"
+			]
+		}, {
+			sid: "accessAthenaQueries",
+            actions: [
+                "athena:GetQueryExecution"
+            ],
+            resources: [
+            	"${aws_athena_workgroup.warcannon.arn}"
+            ]
+        }, {
+			sid: "accessAthenaResults",
+            actions: [
+                "s3:GetObject"
+            ],
+            resources: [
+            	"${aws_s3_bucket.warcannon_results.arn}/athena/*"
+            ]
+        }, {
+			sid: "allowVPCAccess",
+            actions: [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "ec2:CreateNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DeleteNetworkInterface"
+            ],
+            resources: [
+            	"*"
+            ]
+        }, {
+			"sid": "xray",
+            "actions": [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+                "xray:GetSamplingStatisticSummaries"
+            ],
+            "resources": [
+                "*"
+            ]
+        }]
+	}),
 	'lambda_cc_loader.tf.json': lambda.lambda_function("cc_loader", {
 		handler: "main.main",
 		timeout: 30,
@@ -284,7 +396,7 @@ local regionKeys = std.objectFields(settings.regions);
 	'lambda_warcannon.tf.json':: lambda.lambda_function("warcannon", {
 		handler: "main.main",
 		timeout: 600,
-		memory_size: 2048,
+		memory_size: 3072,
 
 		environment: {
 			variables: {
@@ -343,7 +455,7 @@ local regionKeys = std.objectFields(settings.regions);
 	'lambda_warcannon_singlefire.tf.json': lambda.lambda_function("warcannon", {
 		handler: "main.main",
 		timeout: 600,
-		memory_size: 2048,
+		memory_size: 3072,
 
 		environment: {
 			variables: {
@@ -471,6 +583,13 @@ local regionKeys = std.objectFields(settings.regions);
 			aws_iam_policy_document: {
 				warcannon_results: {
 					statement: [{
+						actions: ["s3:PutObject"],
+						resources: ["${aws_s3_bucket.warcannon_results.arn}/*"],
+						principals: {
+							type: "AWS",
+							identifiers: ["${aws_iam_role.warcannon_instance_profile.arn}"]
+						}
+					}, {
 						actions: ["s3:PutObject"],
 						resources: ["${aws_s3_bucket.warcannon_results.arn}/*"],
 						principals: {

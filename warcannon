@@ -62,13 +62,16 @@ deploy () {
 	echo "[*] Generating combined settings file"
 	jq -s '.[0] * .[1]' settings.json regions.json > generated-settings.jsonnet
 
-	rm *.tf.json spot_request.json
+	rm -f *.tf.json spot_request.json
 	echo "[*] Generating Terraform configurations"
 	# Generate terraform configs
 	jsonnet -m . terraform.jsonnet
 
-	# terraform init
-	# terraform apply
+	if [[ $? -ne 0 ]]; then
+		"[!] Jsonnet failed. Unable to proceed."
+	fi
+
+	[[ ! -d .terraform ]] && $TERBIN init
 	terraform apply -auto-approve
 }
 
@@ -242,6 +245,12 @@ showHelp () {
 	echo -e "   \e[36mpopulate <crawl> [<num_chunks> <chunk_size>]\e[0m"
 	echo "      Populates the queue with warcs from a matching 'crawl'"
 	echo
+	echo -e "   \e[36mqueryAthena <query>\e[0m"
+	echo "      Queries Athena."
+	echo
+	echo -e "   \e[36mpopulateAthena <queryExecutionId>\e[0m"
+	echo "      Populates the queue based on the results of a previously-run Athena query."
+	echo
 	echo -e "   \e[36memptyQueue\e[0m"
 	echo "      Purges the SQS queue of all unfinished work."
 	echo
@@ -372,6 +381,60 @@ populateSqs () {
 	fi
 
 	echo "'$0 populate' requires either one parameter or three."
+}
+
+populateAthena () {
+	aws --profile $(jq -r '.awsProfile' settings.json) --region us-east-1 lambda invoke \
+		--function-name cc_athena_loader --cli-binary-format raw-in-base64-out --invocation-type RequestResponse \
+		--payload "{\"queryExecutionId\":\"$1\"}" /dev/stdout
+
+	echo
+}
+
+queryAthena () {
+	
+	AWSPROFILE=`jq -r '.awsProfile' settings.json`
+
+	DATABASE=`terraform output athena_table`
+	WORKGROUP=`terraform output athena_workgroup`
+
+	QUERY="$*"
+
+	QUERYEXECID=`aws athena start-query-execution \
+		--profile $AWSPROFILE \
+		--region us-east-1 \
+		--work-group ${WORKGROUP} \
+		--query-execution-context Database=${DATABASE} \
+		--query-string "${QUERY}" \
+		| jq -r '.QueryExecutionId'`
+
+	if [[ $? -ne 0 || "$QUERYEXECID" == "" ]]; then
+		echo "[!] Query failed. Unable to proceed."
+		exit 1
+	fi
+
+	echo -n "[+] Query Exec Id: $QUERYEXECID "
+
+	STATE="QUEUED"
+	while [[ "$STATE" == "QUEUED" || "$STATE" == "RUNNING" ]]; do
+		sleep 1
+		STATE=`aws --profile $AWSPROFILE --region us-east-1 athena get-query-execution --query-execution-id $QUERYEXECID | jq -r '.QueryExecution.Status.State'`
+		echo -n "."
+	done
+
+	if [[ "$STATE" == "CANCELLED" ]]; then
+		echo
+		echo "[!] Query entered state 'cancelled'. Unable to proceed."
+		exit 1
+	fi
+
+	if [[ "$STATE" == "FAILED" ]]; then
+		echo
+		echo "[!] Query entered state 'failed'. Unable to proceed."
+		exit 1
+	fi
+
+	echo " SUCCEEDED"
 }
 
 terminate () {
@@ -507,6 +570,16 @@ case $1 in
 		echo "Example (full): $0 populate 2021-04"
 		echo "Example (partial): $0 populate 2021-04 4 10"
 		echo
+		;;
+
+	populateAthena)
+		verifyStatus
+		populateAthena $2
+		;;
+
+	queryAthena | q)
+		verifyStatus
+		queryAthena $2
 		;;
 
 	status | s)

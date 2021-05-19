@@ -6,7 +6,7 @@ const fs = require("fs");
 const zlib = require('zlib')
 const { Duplex } = require('stream');
 const { WARCStreamTransform } = require('node-warc');
-const { mime_types, regex_patterns, custom_functions } = require("./matches.js");
+const { mime_types, domains, regex_patterns, custom_functions } = require("./matches.js");
 
 exports.main = function(parser) {
 
@@ -40,11 +40,32 @@ exports.main = function(parser) {
 
 		parser.on('data', (record) => {
 
+			if (new Date() - last_status_report > 1000) {
+				last_status_report = new Date();
+				process.send({type: "progress", recordcount: records, recordsprocessed: records_processed});
+			}
+
 			records++;
 
 			// Only process response records with mime-types we care about.
 			if (record.warcHeader['WARC-Type'] != "response" || mime_types.indexOf(record.warcHeader['WARC-Identified-Payload-Type']) < 0) {
 				return true;
+			}
+
+			var domain = record.warcHeader['WARC-Target-URI'].split('/')[2];
+
+			// Only process warcs in the domains we specify.
+			let parserecord = true;
+			domains.some((domain_match) => {
+				parserecord = domain.indexOf(domain_match) > -1;
+				if (parserecord) {
+					console.log(domain);
+				}
+				return parserecord;
+			});
+
+			if (!parserecord) {
+				return false;
 			}
 
 			records_processed++;
@@ -53,7 +74,6 @@ exports.main = function(parser) {
 				recordStartTime = hrtime();
 			}
 
-			var domain = record.warcHeader['WARC-Target-URI'].split('/')[2];
 			Object.keys(regex_patterns).forEach((e) => {
 				if (isLocal) {
 					if (!regexCost.hasOwnProperty(e)) {
@@ -103,11 +123,6 @@ exports.main = function(parser) {
 					}
 				}
 			});
-
-			if (records_processed % 100 == 0 && new Date() - last_status_report > 1000) {
-				last_status_report = new Date();
-				process.send({type: "progress", recordcount: records});
-			}
 
 			if (isLocal) {
 				recordCost.count++

@@ -5,8 +5,12 @@ exports.mime_types = [
     'text/javascript',
     'text/ecmascript',
     'application/javascript',
-    'application/ecmascript'
+    'application/ecmascript',
+    'application/json'
 ];
+
+exports.domains = [];
+// exports.domains = [/^.*?$/];
 
 exports.regex_patterns = {
 	access_key_id: /(\'A|"A)(SIA|KIA|IDA|ROA)[JI][A-Z0-9]{14}[AQ][\'"]/g,
@@ -23,9 +27,12 @@ exports.regex_patterns = {
 	amazon_appid: /[\'"]amzn1\.application-oa2-client\.[0-9a-f]{32}[\'"]/g,
 	amazon_authorize: /amazon\.Login\.authorize\(/g,
 
+	// Find s3 buckets
+	s3_buckets: /https?:\/\/[^ \.\/]+?\.s3\.amazonaws\.com/g,
+
 	// Find proxies
-	safebase64_url: /['"]https:\/\/[^'"]+[&?/]{1}aHR0c[A-Za-z0-9_-]+[^ ]*?['"]/g,
-	base64_url: /['"]https:\/\/[^'"]+[&?/]{1}aHR0c[A-Za-z0-9+/]+={0,2}[^ ]*?['"]/g,
+	safebase64_url: /['"]https?:\/\/[^'"]+[&?/]{1}aHR0c[A-Za-z0-9_-]+[^ ]*?['"]/g,
+	base64_url: /['"]https?:\/\/[^'"]+[&?/]{1}aHR0c[A-Za-z0-9+/]+={0,2}[^ ]*?['"]/g,
 };
 
 // custom functions are executed against regex matches of the associated key.
@@ -86,7 +93,7 @@ exports.custom_functions = {
 			return false;
 		}
 
-		console.log(match, text);
+		// console.log(match, text);
 		
 		return match;
 	}

@@ -3,64 +3,60 @@
 var aws = require('aws-sdk');
 const zlib = require('zlib');
 
+var athena = new aws.Athena({region: "us-east-1"});
 var s3 = new aws.S3({region: "us-east-1"});
 var sqs = new aws.SQS({region: "us-east-1"});
 
-exports.main = function(event, context, callback) {
+exports.main = async function(event, context, callback) {
 
-	var start = new Date();
+	let start = new Date();
 
-	if (!event.crawl) {
-		console.log('No crawl specified. Use a payload like {"crawl": "CC-MAIN-2020-34"}');
-		return callback('No crawl specified. Use a payload like {"crawl": "CC-MAIN-2020-34"}');
+	if (!event.queryExecutionId) {
+		let message = 'No queryExecutionId specified. Use a payload like {"queryExecutionId": "ed8488d3-df35-40dd-80cd-fbfe722dc7d3"}';
+		console.log(message);
+		return callback(message);
 	}
 
-	var segmentCount = 0;
-	var maxChunks = event.max || 300000;
-	var chunkSize = event.chunk || 10;
+	let segmentCount = 0;
+	const maxChunks = event.max || 1000000000;
+	const chunkSize = event.chunk || 10;
 
 	var promiseError = false;
 
-	return s3.getObject({
-		Bucket: "commoncrawl",
-		Key: "crawl-data/" + event.crawl + "/warc.paths.gz"
-	}).promise()
-	.then((s3obj) => {
-		console.log("s3 promise returned after " + (new Date() - start));
+	try {
 
-		return new Promise((success, failure) => {
-			zlib.gunzip(s3obj.Body, function(err, data) {
-				if (err) {
-					promiseError = true;
+		let execution = await athena.getQueryExecution({
+				QueryExecutionId: event.queryExecutionId
+			}).promise();
 
-					console.log(err);
-					return Promise.reject(callback(err));
-				}
+		let location = execution.QueryExecution.ResultConfiguration.OutputLocation;
+		let s3Obj = await s3.getObject({
+				Bucket: location.split('/')[2],
+				Key: location.split('/').slice(3).join('/')
+			}).promise()
 
-				return success(data);
-			});
-		})
-	}, (err) => {
-		promiseError = true;
+		let s3Body = Buffer.from(s3Obj.Body).toString('UTF-8').split("\n");
+		let columnHeaders = s3Body[0].split(",");
+		let warcFilenameHeaderPosition = columnHeaders.indexOf('"warc_filename"');
 
-		console.log(err);
-		return Promise.reject(callback(err));
-	}).then((data) => {
-
-		if (promiseError) {
-			return Promise.reject('Skipping due to previous error');
+		if (warcFilenameHeaderPosition < 0) {
+			let message = 'Unable to find "warc_filename" among CSV headers. Your query must contain this column.';
+			console.log(message);
+			return callback(message);
 		}
 
-		console.log("zlib promise returned after " + (new Date() - start));
+		let lines = [];
 
-		var lines = data.toString().split("\n");
-		lines.pop();
+		s3Body.shift();
+		s3Body.forEach((line) => {
+			lines.push(line.split(',')[warcFilenameHeaderPosition].slice(1, -1))
+		});
 
 		segmentCount = lines.length;
 
-		var mask = false;
-		var chunk = {};
-		var chunks = [];
+		let mask = false;
+		let chunk = {};
+		let chunks = [];
 		
 		for (let a = 0; a < lines.length; a++) {
 			if (!mask || lines[a].substring(0, mask.length) != mask) {
@@ -79,18 +75,6 @@ exports.main = function(event, context, callback) {
 			}
 		}
 
-		return Promise.resolve(chunks);
-	}, (err) => {
-		promiseError = true;
-
-		console.log(err);
-		return Promise.reject(callback(err));
-	}).then((chunks) => {
-		
-		if (promiseError) {
-			return Promise.reject('Skipping due to previous error');
-		}
-
 		console.log(chunks.length + " chunks, size " + JSON.stringify(chunks).length);
 		console.log("finished after " + (new Date() - start));
 
@@ -104,7 +88,7 @@ exports.main = function(event, context, callback) {
 				if (!chunks[(a * 10) + x]) {
 					continue;
 				}
-				
+
 				entries.push({
 					Id: event.crawl + "-" + ((a * 10) + x),
 					MessageBody: JSON.stringify(chunks[(a * 10) + x])
@@ -121,32 +105,17 @@ exports.main = function(event, context, callback) {
 
 		console.log("Created " + sqsPromises.length + " SQS batches");
 
-		return Promise.all(sqsPromises);
-
-	}, (err) => {
-		promiseError = true;
-		
-		console.log(err);
-		return Promise.reject(callback(err));
-	}).then((results) => {
-		
-		if (promiseError) {
-			return Promise.reject('Skipping due to previous error');
-		}
-
+		let results = await Promise.all(sqsPromises);
 		let totalCount = 0;
 		results.forEach((result) => {
 			totalCount += result.Successful.length;
 		});
 
 		return Promise.resolve(callback(null,  "Created " + totalCount + " chunks of " + chunkSize + " from " + segmentCount + " available segments"));
-
-	}, (err) => {
-		promiseError = true;
 		
-		console.log(err);
-		return Promise.reject(callback(err));
-	})
+	} catch (e) {
+		return Promise.reject(callback(e));
+	}
 }
 
 function getMask(left, right) {
