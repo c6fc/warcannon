@@ -61,7 +61,13 @@ exports.regex_patterns = {
 };
 ```
 
-Strings matching this expression will be saved under the corresponding key in the results; `access_key_id` in this case. **Protip:** Use (RegExr)[https://regexr.com] with the 'JavaScript' format to build and test regular expressions against known-good matches.
+Strings matching this expression will be saved under the corresponding key in the results; `access_key_id` in this case. **Protip:** Use [RegExr](https://regexr.com) with the 'JavaScript' format to build and test regular expressions against known-good matches.
+
+You also have the option of only capturing results from specified domains. To do this, simply populate the `domains` array with the FQDNs that you wish to include. It is recommended that you leave this empty `[]` since it's almost never worthwhile (the processing effort saved is very small), but it can be useful in some niche cases.
+
+```javascript
+exports.domains = ["example1.com", "example2.com"];
+```
 
 Once the `matches.js` is populated, run the following command:
 ```bash
@@ -70,9 +76,9 @@ warcannon$ ./warcannon testLocal <warc_path>
 
 WARCannon will then download the warc and parse it with your configured matches. There are a few quality-of-life things that WARCannon does by default that you should be aware of:
 1. WARCannon will download the warc to `/tmp/warcannon.testLocal` on first run, and will re-use the downloaded warc from then on even if you change the warc_path. If you wish to use a different warc, you must delete this file.
-2. Warcs are large; most coming in at just under 1GB. WARCannon uses the CLI for multi-threaded downloads, but if you have slow internet, you'll need to exercize patience the first time around.
+2. WARCs are large; most coming in at just over 1GB. WARCannon uses the CLI for multi-threaded downloads, but if you have slow internet, you'll need to exercise patience the first time around.
 
-On top of everything else, WARCannon will attempt to evalutate the total compute cost of your regular expressions when run locally. This way, you can be informed if a given regular expression will significantly impact performance *before* you execute your campaign.
+On top of everything else, WARCannon will attempt to evaluate the total compute cost of your regular expressions when run locally. This way, you can be informed if a given regular expression will significantly impact performance *before* you execute your campaign.
 
 ![Image](http://c6fc.io/warcannon-dev.png)
 
@@ -116,7 +122,7 @@ Once you're happy with the results you get in Lambda, you're ready to grep the i
 
 WARCannon uses AWS Simple Queue Service to distribute work to the compute nodes. To ensure that your results aren't tainted with any prior runs, you can tell WARCannon to empty the queue:
 ```bash
-warcannon$ ./warcannon empty
+warcannon$ ./warcannon emptyQueue
 [+] Cleared [ 15 ] messages from the queue
 ```
 
@@ -132,7 +138,7 @@ Verify the following before proceeding:
 1. The SQS Queue is empty
 2. The job status is 'INACTIVE'
 
-#### Populating the Queue
+#### Populating the Queue (Simple)
 
 In order to create the queue messages that the compute nodes will consume, you must first populate SQS with crawl data. WARCannon has several commands to help with this, starting with the ability to show the available scans. In this case, let's look at the scans available for the year 2021:
 ```bash
@@ -151,7 +157,7 @@ warcannon$ ./warcannon populate 2021-04
 }
 ```
 
-#### Populating the Queue via Athena
+#### Populating the Queue via Athena (Advanced)
 
 During deployment, WARCannon automatically provisions a database (warcannon_commoncrawl) and workgroup (warcannon) in Athena that can be used to rapidly query information from CommonCrawl. This can be especially useful for populating sparse campaigns based on certain queries. For example, the following query will search for WARCs that contain responses from 'example.com'
 
@@ -188,6 +194,8 @@ WARCannon can then use the results of a query to populate the queue, and does so
     "ExecutedVersion": "$LATEST"
 }
 ```
+
+**Note: While populating a sparse job for a single domain might seem like a good idea, it often isn't.** The responses from a single domain tend to be spread widely across a large subset of WARCs. This can be seen clearly using the example query above to see that of the ~150,000 records in each WARC, the largest single hit for moderate-sized websites can be in the single-digits.
 
 #### Firing the WARCannon
 
