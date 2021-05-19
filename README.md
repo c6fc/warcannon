@@ -37,7 +37,7 @@ warcannon$ cp settings.json.sample settings.json
 
 Edit `settings.json` to taste:
 
-* `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '<somerandomcharacters>' with random characters to make it unique, or specify another bucket you own.
+* `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '< somerandomcharacters >' with random characters to make it unique, or specify another bucket you own.
 * `awsProfile`: The profile name in `~/.aws/credentials` that you want to piggyback on for the installation.
 
 * `nodeInstanceType`: An array of instance types to use for parallel processing. 'c'-types are best value for this purpose, and any size can be used. `["c5n.18xlarge"]` is the recommended value for true campaigns.
