@@ -26,12 +26,15 @@ GROUP BY warc_filename
 ORDER BY count DESC
 
 
-Search for string in path
+Search for string in path, sorted by most matches
 
-SELECT url_host_name,
-  url_path
-FROM "ccindex"."ccindex"
+SELECT 
+  COUNT(*) as num_hits,
+  warc_filename
+FROM "warcannon_commoncrawl"."ccindex"
 WHERE crawl = 'CC-MAIN-2020-34'
   AND subset = 'warc'
-  AND url_host_tld = 'va'
-  AND url_path LIKE '%holysee%'
+  AND url_path LIKE '%/user/%'
+GROUP BY warc_filename
+ORDER BY num_hits DESC
+LIMIT 50

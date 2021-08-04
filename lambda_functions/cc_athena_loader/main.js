@@ -45,10 +45,16 @@ exports.main = async function(event, context, callback) {
 			return callback(message);
 		}
 
+		console.log(`[+] warc_filename found at column ${warcFilenameHeaderPosition}`);
+
 		let lines = [];
 
 		s3Body.shift();
 		s3Body.forEach((line) => {
+			if (line == "") {
+				return false;
+			}
+			
 			lines.push(line.split(',')[warcFilenameHeaderPosition].slice(1, -1))
 		});
 

@@ -7,8 +7,8 @@ fi
 
 AWSPROFILE=`jq -r '.awsProfile' settings.json`
 
-DATABASE=`terraform output athena_table`
-WORKGROUP=`terraform output athena_workgroup`
+DATABASE=$(terraform output athena_table)
+WORKGROUP=$(terraform output athena_workgroup)
 
 query_athena () {
 	QUERYEXECID=`aws athena start-query-execution \
@@ -48,11 +48,12 @@ query_athena () {
 	echo " SUCCEEDED"
 }
 
+echo "[+] Populating athena with database ${DATABASE} and workgroup ${WORKGROUP}"
 query_athena "CREATE EXTERNAL TABLE IF NOT EXISTS ccindex ( url_surtkey STRING, url STRING, url_host_name STRING, url_host_tld STRING, url_host_2nd_last_part STRING, url_host_3rd_last_part STRING, url_host_4th_last_part STRING, url_host_5th_last_part STRING, url_host_registry_suffix STRING, url_host_registered_domain STRING, url_host_private_suffix STRING, url_host_private_domain STRING, url_protocol STRING, url_port INT, url_path STRING, url_query STRING, fetch_time TIMESTAMP, fetch_status SMALLINT, content_digest STRING, content_mime_type STRING, content_mime_detected STRING, content_charset STRING, content_languages STRING, warc_filename STRING, warc_record_offset INT, warc_record_length INT, warc_segment STRING) PARTITIONED BY (crawl STRING, subset STRING) STORED AS parquet LOCATION 's3://commoncrawl/cc-index/table/cc-main/warc/';"
 query_athena "MSCK REPAIR TABLE ccindex"
 
 ## These are test queries still under development.
-query_athena "PREPARE domain_search_all FROM SELECT DISTINCT(warc_filename) as warc_filename FROM ${DATABASE}.ccindex WHERE subset = 'warc' AND url_host_registered_domain = ? ORDER BY warc_filename ASC"
-query_athena "PREPARE domain_search FROM SELECT warc_filename, COUNT(url_path) as num FROM ${DATABASE}.ccindex WHERE subset = 'warc' AND url_host_registered_domain = ? AND crawl = ? GROUP BY warc_filename ORDER BY num DESC"
+# query_athena "PREPARE domain_search_all FROM SELECT DISTINCT(warc_filename) as warc_filename FROM ${DATABASE}.ccindex WHERE subset = 'warc' AND url_host_registered_domain = ? ORDER BY warc_filename ASC"
+# query_athena "PREPARE domain_search FROM SELECT warc_filename, COUNT(url_path) as num FROM ${DATABASE}.ccindex WHERE subset = 'warc' AND url_host_registered_domain = ? AND crawl = ? GROUP BY warc_filename ORDER BY num DESC"
 # query_athena "EXECUTE domain_search USING 'domain.com', 'CC-MAIN-2021-04'"
 # query_athena "SELECT warc_filename, COUNT(url_path) as num FROM ${DATABASE}.ccindex WHERE subset = 'warc' AND url_host_registered_domain IN ('domain1.com', 'domain2.com') AND crawl = 'CC-MAIN-2021-04' GROUP BY warc_filename ORDER BY num DESC"

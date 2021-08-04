@@ -38,10 +38,11 @@ local regionKeys = std.objectFields(settings.regions);
 						result_configuration: {
 							output_location: "s3://${aws_s3_bucket.warcannon_results.bucket}/athena/"
 						}
-					}
+					},
+					force_destroy: true
 				}
 			},
-			null_resource: {
+			null_resource:: {
 				athena_populate: {
 					triggers: {
 						new_database: "${aws_athena_database.warcannon_commoncrawl.name}"
@@ -49,7 +50,8 @@ local regionKeys = std.objectFields(settings.regions);
 
 					provisioner: [{
 						"local-exec": {
-							command: "./populate_athena.sh"
+							command: "./populate_athena.sh",
+							interpreter: ["/bin/bash"]
 						}
 					}],
 
