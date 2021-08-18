@@ -249,3 +249,9 @@ delete: s3://warcannon-results-202...
 ...
 [+] Deleted [ 21 ] files from S3.
 ```
+
+# Official Discord Channel
+
+Come hang out on Discord!
+
+[![Porchetta Industries](https://discordapp.com/api/guilds/736724457258745996/widget.png?style=banner3)](https://discord.gg/7SDYBs65Zp)
