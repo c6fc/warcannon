@@ -1,5 +1,6 @@
-local settings = import 'generated-settings.jsonnet';
-local backend = import 'jsonnet/backend.libsonnet';
+local sonnetry = import 'sonnetry';
+local aws = import 'aws-sdk';
+
 local vpc = import 'jsonnet/vpc.libsonnet';
 local subnet = import 'jsonnet/subnet.libsonnet';
 local route = import 'jsonnet/routetable.libsonnet';
@@ -19,7 +20,9 @@ local null_resources = import 'jsonnet/null_resources.libsonnet';
 local template = import 'jsonnet/template.libsonnet';
 local ec2_spot_request = import 'jsonnet/ec2_spot_request.libsonnet';
 
-local regionKeys = std.objectFields(settings.regions);
+local settings = import './settings.json';
+
+local availabilityzones = aws.getAvailabilityZones()['us-east-1'];
 
 {
 	'athena.tf.json': {
@@ -68,7 +71,7 @@ local regionKeys = std.objectFields(settings.regions);
 			}
 		}
 	},
-	'backend.tf.json': backend(settings),
+	'backend.tf.json': sonnetry.bootstrap('c6fc_warcannon'),
 	'cloudfront.tf.json': cloudfront.distribution(settings),
 	'data.tf.json': {
 		data: {
@@ -143,17 +146,11 @@ local regionKeys = std.objectFields(settings.regions);
 						"logs:CreateLogStream",
 						"logs:PutLogEvents"
 					],
-					Resource: [
-						"arn:aws:logs:*:*:*"
-					]
+					Resource: "arn:aws:logs:*:*:*"
 				}, {
 					Effect: "Allow",
 					Action: "s3:PutObject",
 					Resource: "${aws_s3_bucket.warcannon_results.arn}/*"
-				}, {
-					Effect: "Allow",
-					Action: "s3:GetObject",
-					Resource: "${aws_s3_bucket.static_site.arn}/package.zip"
 				}, {
 					Effect: "Allow",
 					Action: [
@@ -188,12 +185,23 @@ local regionKeys = std.objectFields(settings.regions);
 			true
 		)
 	},
-	'igw.tf.json': {
-		resource: {
-			aws_internet_gateway: {
-				[regionKeys[i]]: igw(regionKeys[i]) for i in std.range(0, std.length(regionKeys) - 1)
-			}
-		}
+	'iam-spotfleet_role.tf.json': {
+		resource: iam.iam_role(
+			"warcannon_spotfleet_role",
+			"Spot fleet role for Warcannon",
+			{
+				AmazonEC2SpotFleetTaggingRole: "arn:aws:iam::aws:policy/service-role/AmazonEC2SpotFleetTaggingRole"
+			},
+			{ },
+			[{
+				Effect: "Allow",
+				Principal: {
+					Service: "spotfleet.amazonaws.com"
+				},
+				Action: "sts:AssumeRole"
+			}],
+			false
+		)
 	},
 	'lambda_cc_athena_loader.tf.json': lambda.lambda_function("cc_athena_loader", {
 		handler: "main.main",
@@ -201,7 +209,7 @@ local regionKeys = std.objectFields(settings.regions);
 		memory_size: 1024,
 
 		vpc_config:: {
-			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
+			subnet_ids: ["${aws_subnet.warcannon-us-east-1-subnet-" + azi + ".id}" for azi in availabilityzones],
 			security_group_ids: ["${aws_security_group.lambda.id}"]
 		},
 
@@ -213,32 +221,24 @@ local regionKeys = std.objectFields(settings.regions);
 		}
 	}, {
 		statement: [{
-			sid: "sqs",
-			actions: [
-				"sqs:SendMessage"
-			],
-			resources: [
-				"${aws_sqs_queue.warcannon_queue.arn}"
-			]
+			Sid: "sqs",
+			Effect: "Allow",
+			Action:"sqs:SendMessage",
+			Resource: "${aws_sqs_queue.warcannon_queue.arn}"
 		}, {
-			sid: "accessAthenaQueries",
-            actions: [
-                "athena:GetQueryExecution"
-            ],
-            resources: [
-            	"${aws_athena_workgroup.warcannon.arn}"
-            ]
+			Sid: "accessAthenaQueries",
+			Effect: "Allow",
+            Action: "athena:GetQueryExecution",
+            Resource: "${aws_athena_workgroup.warcannon.arn}"
         }, {
-			sid: "accessAthenaResults",
-            actions: [
-                "s3:GetObject"
-            ],
-            resources: [
-            	"${aws_s3_bucket.warcannon_results.arn}/athena/*"
-            ]
+			Sid: "accessAthenaResults",
+			Effect: "Allow",
+            Action: "s3:GetObject",
+            Resource: "${aws_s3_bucket.warcannon_results.arn}/athena/*"
         }, {
-			sid: "allowVPCAccess",
-            actions: [
+			Sid: "allowVPCAccess",
+			Effect: "Allow",
+            Action: [
                 "logs:CreateLogGroup",
                 "logs:CreateLogStream",
                 "logs:PutLogEvents",
@@ -246,21 +246,7 @@ local regionKeys = std.objectFields(settings.regions);
                 "ec2:DescribeNetworkInterfaces",
                 "ec2:DeleteNetworkInterface"
             ],
-            resources: [
-            	"*"
-            ]
-        }, {
-			"sid": "xray",
-            "actions": [
-                "xray:PutTraceSegments",
-                "xray:PutTelemetryRecords",
-                "xray:GetSamplingRules",
-                "xray:GetSamplingTargets",
-                "xray:GetSamplingStatisticSummaries"
-            ],
-            "resources": [
-                "*"
-            ]
+            Resource: "*"
         }]
 	}),
 	'lambda_cc_loader.tf.json': lambda.lambda_function("cc_loader", {
@@ -269,7 +255,7 @@ local regionKeys = std.objectFields(settings.regions);
 		memory_size: 1024,
 
 		vpc_config:: {
-			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
+			subnet_ids: ["${aws_subnet.warcannon-us-east-1-subnet-" + azi + ".id}" for azi in availabilityzones],
 			security_group_ids: ["${aws_security_group.lambda.id}"]
 		},
 
@@ -280,24 +266,19 @@ local regionKeys = std.objectFields(settings.regions);
 		}
 	}, {
 		statement: [{
-			sid: "sqs",
-			actions: [
-				"sqs:SendMessage"
-			],
-			resources: [
-				"${aws_sqs_queue.warcannon_queue.arn}"
-			]
+			Sid: "sqs",
+			Effect: "Allow",
+			Action: "sqs:SendMessage",
+			Resource: "${aws_sqs_queue.warcannon_queue.arn}"
 		}, {
-			sid: "getCommonCrawl",
-			actions: [
-				"s3:GetObject"
-			],
-			resources: [
-				"arn:aws:s3:::commoncrawl/*"
-			]
+			Sid: "getCommonCrawl",
+			Effect: "Allow",
+			Action: "s3:GetObject",
+			Resource: "arn:aws:s3:::commoncrawl/*"
 		}, {
-			sid: "allowVPCAccess",
-            actions: [
+			Sid: "allowVPCAccess",
+			Effect: "Allow",
+            Action: [
                 "logs:CreateLogGroup",
                 "logs:CreateLogStream",
                 "logs:PutLogEvents",
@@ -305,21 +286,7 @@ local regionKeys = std.objectFields(settings.regions);
                 "ec2:DescribeNetworkInterfaces",
                 "ec2:DeleteNetworkInterface"
             ],
-            resources: [
-            	"*"
-            ]
-        }, {
-			"sid": "xray",
-            "actions": [
-                "xray:PutTraceSegments",
-                "xray:PutTelemetryRecords",
-                "xray:GetSamplingRules",
-                "xray:GetSamplingTargets",
-                "xray:GetSamplingStatisticSummaries"
-            ],
-            "resources": [
-                "*"
-            ]
+            Resource: "*"
         }]
 	}),
 	'lambda_progress_stream_processor.tf.json': lambda.lambda_function("progress_stream_processor", {
@@ -335,65 +302,39 @@ local regionKeys = std.objectFields(settings.regions);
 		}
 	}, {
 		statement: [{
-			sid: "s3",
-			actions: [
-				"s3:PutObject"
-			],
-			resources: [
-				"${aws_s3_bucket.static_site.arn}/progress.json"
-			]
+			Sid: "s3",
+			Effect: "Allow",
+			Action: "s3:PutObject",
+			Resource: "${aws_s3_bucket.static_site.arn}/progress.json"
 		}, {
-			sid: "dynamodb",
-			actions: [
-				"dynamodb:Scan"
-			],
-			resources: [
-				"${aws_dynamodb_table.warcannon_progress.arn}"
-			]
+			Sid: "dynamodb",
+			Effect: "Allow",
+			Action: "dynamodb:Scan",
+			Resource: "${aws_dynamodb_table.warcannon_progress.arn}"
 		}, {
-			sid: "dynamodbstream",
-			actions: [
+			Sid: "dynamodbstream",
+			Effect: "Allow",
+			Action: [
 				"dynamodb:DescribeStream",
                 "dynamodb:GetRecords",
                 "dynamodb:GetShardIterator",
                 "dynamodb:ListStreams"
 			],
-			resources: [
-				"${aws_dynamodb_table.warcannon_progress.arn}/stream/*"
-			]
+			Resource: "${aws_dynamodb_table.warcannon_progress.arn}/stream/*"
 		}, {
-			sid: "sqs",
-			actions: [
-				"sqs:GetQueueAttributes"
-			],
-			resources: [
-				"${aws_sqs_queue.warcannon_queue.arn}"
-			]
+			Sid: "sqs",
+			Effect: "Allow",
+			Action: "sqs:GetQueueAttributes",
+			Resource: "${aws_sqs_queue.warcannon_queue.arn}"
 		}, {
-			sid: "ec2",
-			actions: [
+			Sid: "ec2",
+			Effect: "Allow",
+			Action: [
 				"ec2:CancelSpotFleetRequests",
 				"ec2:DescribeSpotFleetRequests"
 			],
-			resources: [
-				"*"
-			]
-		}, {
-			sid: "logxray",
-            actions: [
-                "xray:PutTraceSegments",
-                "xray:PutTelemetryRecords",
-                "xray:GetSamplingRules",
-                "xray:GetSamplingTargets",
-                "xray:GetSamplingStatisticSummaries",
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents",
-            ],
-            resources: [
-                "*"
-            ]
-        }]
+			Resource: "*"
+		}]
 	}),
 	'lambda_warcannon.tf.json':: lambda.lambda_function("warcannon", {
 		handler: "main.main",
@@ -407,51 +348,29 @@ local regionKeys = std.objectFields(settings.regions);
 		},
 
 		vpc_config:: {
-			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
+			subnet_ids: ["${aws_subnet.warcannon-us-east-1-subnet-" + azi + ".id}" for azi in availabilityzones],
 			security_group_ids: ["${aws_security_group.lambda.id}"]
 		}
 	}, {
 		statement: [{
-			sid: "s3",
-			actions: [
-				"s3:PutObject"
-			],
-			resources: [
-				"${aws_s3_bucket.warcannon_results.arn}/*"
-			]
+			Sid: "s3",
+			Effect: "Allow",
+			Action: "s3:PutObject",
+			Resource: "${aws_s3_bucket.warcannon_results.arn}/*"
 		}, {
-			sid: "getCommonCrawl",
-			actions: [
-				"s3:GetObject"
-			],
-			resources: [
-				"arn:aws:s3:::commoncrawl/*"
-			]
+			Sid: "getCommonCrawl",
+			Effect: "Allow",
+			Action: "s3:GetObject",
+			Resource: "arn:aws:s3:::commoncrawl/*"
 		}, {
-			sid: "allowVPCAccess",
-            actions: [
+			Sid: "allowVPCAccess",
+			Effect: "Allow",
+            Action: [
                 "ec2:CreateNetworkInterface",
                 "ec2:DescribeNetworkInterfaces",
                 "ec2:DeleteNetworkInterface"
             ],
-            resources: [
-            	"*"
-            ]
-        }, {
-			sid: "logxray",
-            actions: [
-                "xray:PutTraceSegments",
-                "xray:PutTelemetryRecords",
-                "xray:GetSamplingRules",
-                "xray:GetSamplingTargets",
-                "xray:GetSamplingStatisticSummaries",
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents",
-            ],
-            resources: [
-                "*"
-            ]
+            Resource: "*"
         }]
 	}),
 	'lambda_warcannon_singlefire.tf.json': lambda.lambda_function("warcannon", {
@@ -466,51 +385,29 @@ local regionKeys = std.objectFields(settings.regions);
 		},
 
 		vpc_config:: {
-			subnet_ids: ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]],
+			subnet_ids: ["${aws_subnet.warcannon-us-east-1-subnet-" + azi + ".id}" for azi in availabilityzones],
 			security_group_ids: ["${aws_security_group.lambda.id}"]
 		}
 	}, {
 		statement: [{
-			sid: "s3",
-			actions: [
-				"s3:PutObject"
-			],
-			resources: [
-				"${aws_s3_bucket.warcannon_results.arn}/*"
-			]
+			Sid: "s3",
+			Effect: "Allow",
+			Action: "s3:PutObject",
+			Resource: "${aws_s3_bucket.warcannon_results.arn}/*"
 		}, {
-			sid: "getCommonCrawl",
-			actions: [
-				"s3:GetObject"
-			],
-			resources: [
-				"arn:aws:s3:::commoncrawl/*"
-			]
+			Sid: "getCommonCrawl",
+			Effect: "Allow",
+			Action: "s3:GetObject",
+			Resource: "arn:aws:s3:::commoncrawl/*"
 		}, {
-			sid: "allowVPCAccess",
-            actions: [
+			Sid: "allowVPCAccess",
+			Effect: "Allow",
+            Action: [
                 "ec2:CreateNetworkInterface",
                 "ec2:DescribeNetworkInterfaces",
                 "ec2:DeleteNetworkInterface"
             ],
-            resources: [
-            	"*"
-            ]
-        }, {
-			sid: "logxray",
-            actions: [
-                "xray:PutTraceSegments",
-                "xray:PutTelemetryRecords",
-                "xray:GetSamplingRules",
-                "xray:GetSamplingTargets",
-                "xray:GetSamplingStatisticSummaries",
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents",
-            ],
-            resources: [
-                "*"
-            ]
+            Resource: "*"
         }]
 	}),
 	'null_resources.tf.json': null_resources.resource(settings),
@@ -520,7 +417,7 @@ local regionKeys = std.objectFields(settings.regions);
 				package: {
 					bucket: "${aws_s3_bucket.static_site.id}",
 					key: "package.zip",
-					source: "${path.module}/lambda_functions/zip_files/package.zip",
+					source: "%s/lambda_functions/zip_files/package.zip" % sonnetry.path(),
 					etag: "${data.archive_file.package.output_md5}"
 				}
 			}
@@ -529,43 +426,37 @@ local regionKeys = std.objectFields(settings.regions);
 			archive_file: {
 				package: {
 					type: "zip",
-					source_dir: "${path.module}/node.js/",
-					output_path: "${path.module}/lambda_functions/zip_files/package.zip",
+					source_dir: "%s/node.js/" % sonnetry.path(),
+					output_path: "%s/lambda_functions/zip_files/package.zip" % sonnetry.path(),
 				}
 			}
 		}
 	},
-	'provider-aws.tf.json': {
-		provider: [
-			provider.aws_provider(settings.awsProfile, "us-east-1")
-		] + [
-			provider.aws_alias(settings.awsProfile, region) for region in regionKeys
-		]
-	},
-	'public_key.tf.json': {
-		resource: {
-			aws_key_pair: {
-				warcannon: {
-					key_name: "warcannon",
-					public_key: settings.sshPubkey
+	'provider.tf.json': {
+		terraform: {
+			required_providers: {
+				aws: {
+					source: "hashicorp/aws",
+					version: "~> 3.75.1"
+				},
+				archive: {
+					source: "hashicorp/archive",
+					version: "~> 2.2.0"
 				}
 			}
-		}
-	},
-	'routetable.tf.json': {
-		resource: {
-			aws_route_table: {
-				[regionKeys[i]]: route.routetable(regionKeys[i]) for i in std.range(0, std.length(regionKeys) - 1)
-			},
-			aws_route_table_association: { 
-				[settings.regions[regionKeys[i]][azi]]: route.association(regionKeys[i], settings.regions[regionKeys[i]][azi])
-					for i in std.range(0, std.length(regionKeys) - 1)
-					for azi in std.range(0, std.length(settings.regions[regionKeys[i]]) - 1)
-			},
-			aws_vpc_endpoint_route_table_association: {
-				[regionKeys[i]]: route.endpoint(regionKeys[i], "s3-" + regionKeys[i]) for i in std.range(0, std.length(regionKeys) - 1)
-			},
-		}
+		},
+		provider: [{
+			aws: {
+				region: 'us-east-1'
+			}
+		}, {
+			aws: {
+				region: 'us-east-1',
+				alias: 'us-east-1'
+			}
+		}, {
+			archive: {}
+		}]
 	},
 	's3.tf.json': {
 		resource: {
@@ -628,37 +519,21 @@ local regionKeys = std.objectFields(settings.regions);
 	'security_groups.tf.json': {
 		resource: {
 			aws_security_group: {
-				lambda: vpc.security_group(
-					"lambda",
-					"us-east-1",
-					"us-east-1",
-					[],
-					[{
-						from_port: 0,
-						to_port: 0,
-						protocol: "-1",
-						cidr_blocks: ["0.0.0.0/0"]
-					}],
-					null
-				),
-				warcannon_node: vpc.security_group(
-					"warcannon_node",
-					"us-east-1",
-					"us-east-1",
-					[{
-						from_port: 22,
-						to_port: 22,
-						protocol: "tcp",
-						cidr_blocks: [settings.allowSSHFrom]
-					}],
-					[{
-						from_port: 0,
-						to_port: 0,
-						protocol: "-1",
-						cidr_blocks: ["0.0.0.0/0"]
-					}],
-					null
-				)
+				lambda: {
+					name: "lambda",
+					vpc_id: "${aws_vpc.warcannon-us-east-1.id}"
+				},
+				warcannon_node: {
+					name: "warcannon_node",
+					vpc_id: "${aws_vpc.warcannon-us-east-1.id}"
+				},
+			},
+			aws_security_group_rule: {
+				lambda_any_egress: vpc.sg_single("all", "lambda", "egress"),
+				lambda_self_egress: vpc.sg_single("any:self", "lambda", "egress"),
+				[if std.objectHas(settings, 'allowSshFrom') then 'warcannon_node_ssh_ingress' else null]: vpc.sg_single("tcp:%s:22" % settings.allowSshFrom, "warcannon_node", "ingress"),
+				warcannon_node_any_egress: vpc.sg_single("all", "warcannon_node", "egress"),
+				warcannon_node_self_egress: vpc.sg_single("any:self", "warcannon_node", "egress")
 			}
 		}
 	},
@@ -701,15 +576,6 @@ local regionKeys = std.objectFields(settings.regions);
 			}
 		}
 	},
-	'subnet.tf.json': {
-		resource: {
-			aws_subnet: {
-				[settings.regions[regionKeys[i]][azi]]: subnet(regionKeys[i], settings.regions[regionKeys[i]][azi], azi, true)
-					for i in std.range(0, std.length(regionKeys) - 1)
-					for azi in std.range(0, std.length(settings.regions[regionKeys[i]]) - 1)
-			} 
-		}
-	},
 	'template_spot_request.tf.json': template.file(
 		"spot_request",
 		"spot_request.json",
@@ -717,14 +583,15 @@ local regionKeys = std.objectFields(settings.regions);
 			ec2_spot_request.json(
 				settings.nodeCapacity,
 				settings.nodeInstanceType,
-				std.join(", ", ["${aws_subnet." + azi + ".id}" for azi in settings.regions["us-east-1"]])
+				["${aws_subnet.warcannon-us-east-1-subnet-" + azi + ".id}" for azi in availabilityzones],
+				[if settings.objectHas(settings, 'sshKeyName') then settings.sshKeyName else null]
 			), "\t"),
 		{}
 	),
 	'template_userdata.tf.json': template.file(
 		"userdata",
 		"userdata.sh",
-		'${file("${path.module}/templates/userdata.tpl")}',
+		'${file("%s/templates/userdata.tpl")}' % sonnetry.path(),
 		{
 			results_bucket: "${aws_s3_bucket.warcannon_results.id}",
 			site_bucket: "${aws_s3_bucket.static_site.id}",
@@ -732,14 +599,5 @@ local regionKeys = std.objectFields(settings.regions);
 			parallelism_factor: settings.nodeParallelism
 		}
 	),
-	'vpc.tf.json': {
-		resource: {
-			aws_vpc: {
-				[regionKeys[i]]: vpc.vpc(regionKeys[i], i) for i in std.range(0, std.length(regionKeys) - 1)
-			},
-			aws_vpc_endpoint: {
-				["s3-" + region]: vpc.endpoint(region, "s3") for region in regionKeys
-			}
-		}
-	}
+	'vpc.tf.json': vpc.public_vpc("warcannon", 'us-east-1', "10.18.24.0/22", availabilityzones, 0, ['s3'])
 }

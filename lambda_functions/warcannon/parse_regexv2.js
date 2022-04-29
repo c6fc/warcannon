@@ -3,40 +3,44 @@
 var start = new Date();
 
 const fs = require("fs");
-const zlib = require('zlib')
+const zlib = require('zlib');
+const crypto = require('crypto');
 const { Duplex } = require('stream');
 const { WARCStreamTransform } = require('node-warc');
 const { mime_types, domains, regex_patterns, custom_functions } = require("./matches.js");
+
+const combined = new RegExp(Object.keys(regex_patterns).map(e => {
+	return `(?<${e}>${regex_patterns[e].source})`
+}).join("|"), 'g');
 
 exports.main = function(parser) {
 
 	let isLocal = false;
 	let regexStartTime = 0;
 	let recordStartTime = 0;
-	const regexCost = {};
+
 	const recordCost = { count: 0, total: 0 };
 
 	if (fs.existsSync('/tmp/warcannon.testLocal')) {
+		console.log('[+] Processing locally.');
 		isLocal = true;
 	}
 
 	return new Promise((success, failure) => {
 		process.send = (typeof process.send == "function") ? process.send : console.log;
 
-		var metrics = {
+		const metrics = {
 			total_hits: 0,
 			regex_hits: {}
 		};
 
-		Object.keys(regex_patterns).forEach((e) => {
-			metrics.regex_hits[e] = {
-				domains: {}
-			};
+		Object.keys(regex_patterns).map((e) => {
+			metrics.regex_hits[e] = {};
 		});
 
-		var records = 0;
-		var records_processed = 0;
-		var last_status_report = new Date();
+		let records = 0;
+		let records_processed = 0;
+		let last_status_report = new Date();
 
 		parser.on('data', (record) => {
 
@@ -52,20 +56,11 @@ exports.main = function(parser) {
 				return true;
 			}
 
-			var domain = record.warcHeader['WARC-Target-URI'].split('/')[2];
+			const domain = record.warcHeader['WARC-Target-URI'].split('/')[2];
 
 			// Only process warcs in the domains we specify.
-			let parserecord = true;
-			domains.some((domain_match) => {
-				parserecord = domain.indexOf(domain_match) > -1;
-				if (parserecord) {
-					console.log(domain);
-				}
-				return parserecord;
-			});
-
-			if (!parserecord) {
-				return false;
+			if (!!domains.length && !domains.includes(domain)) {
+				return true;
 			}
 
 			records_processed++;
@@ -74,55 +69,42 @@ exports.main = function(parser) {
 				recordStartTime = hrtime();
 			}
 
-			Object.keys(regex_patterns).forEach((e) => {
-				if (isLocal) {
-					if (!regexCost.hasOwnProperty(e)) {
-						regexCost[e] = { count: 0, total: 0 };
+			const matches = record.content.toString().matchAll(combined);
+
+			// matchAll is an iterator with one match per capture group per yield
+			// Capture groups with no match are undefined.
+			for (const match of matches) {
+				Object.keys(match.groups).map(e => {
+					if (!!!match.groups[e]) {
+						return false;
 					}
 
-					regexStartTime = hrtime();
-				}
+					let value = match.groups[e];
+					if (!!custom_functions[e]) {
+						value = custom_functions[e](value);
 
-				let matches = record.content.toString().match(regex_patterns[e]);
-
-				if (matches != null && custom_functions.hasOwnProperty(e)) {
-					let customMatches = [];
-					matches.forEach((match) => {
-						let customMatch = custom_functions[e](match);
-						if (customMatch != false) {
-							customMatches.push(customMatch);
+						// (return === false) drops the result
+						if (value === false) {
+							return false;
 						}
-					});
-
-					matches = (customMatches.length > 0) ? customMatches : null;
-				}
-
-				if (matches != null) {
-
-					if (!metrics.regex_hits[e].domains.hasOwnProperty(domain)) {
-						metrics.regex_hits[e].domains[domain] = {
-							"matches": [],
-							"target_uris": []
-						};
-					};
-
-					matches.forEach((m) => {
-						if (m !== null) {
-							metrics.total_hits++;
-							metrics.regex_hits[e].domains[domain].matches.push(m.trim().replace(/['"]+/g, ""));
-						}
-					})
-
-					if (metrics.regex_hits[e].domains[domain].target_uris.indexOf(record.warcHeader['WARC-Target-URI']) < 0) {
-						metrics.regex_hits[e].domains[domain].target_uris.push(record.warcHeader['WARC-Target-URI']);
 					}
-				}
 
-				if (isLocal) {
-					regexCost[e].count++
-					regexCost[e].total += hrtime() - regexStartTime;
-				}
-			});
+					metrics.total_hits++;
+					value = value.trim().replace(/['"]+/g, "");
+					const key = hash(value);
+
+					metrics.regex_hits[e][key] ??= { value };
+					metrics.regex_hits[e][key][domain] ??= [];
+
+					let uri = record.warcHeader['WARC-Target-URI'];
+					let uris = metrics.regex_hits[e][key][domain];
+
+					if (uris.length < 3 && !uris.includes(uri)) {
+						uris.push(uri);
+					}
+
+				});
+			}
 
 			if (isLocal) {
 				recordCost.count++
@@ -132,7 +114,7 @@ exports.main = function(parser) {
 			return true;
 		});
 
-		parser.on('end', () => {
+		parser.on('end', function () {
 			
 			process.send({message: metrics, type: "done"});
 
@@ -140,15 +122,6 @@ exports.main = function(parser) {
 				console.log("--- Performance statistics ---");
 				let record = roundAvg(recordCost.total, recordCost.count);
 				console.log("Average per-record processing time: " + record + "ns");
-				
-				let totalRegexCost = 0;
-				Object.keys(regexCost).forEach((e) => {
-					let self = roundAvg(regexCost[e].total, regexCost[e].count);
-					totalRegexCost += self;
-					console.log(toFixedLength(e, 20) + " -  Self: " + self + "ns; Of record: " + Math.round(self / record * 10000) / 100 + "%");
-				});
-
-				console.log("Per-record overhead: " + Math.round((record - totalRegexCost) / record * 10000) / 100 + "%");
 
 				var total_mem = 0;
 				var mem = process.memoryUsage();
@@ -159,7 +132,7 @@ exports.main = function(parser) {
 				}
 
 				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
-				fs.writeFileSync('results/localResults.json', JSON.stringify(metrics));
+				fs.writeFileSync('results/localResultsv2.json', JSON.stringify(metrics));
 			}
 
 			success(metrics);
@@ -196,7 +169,11 @@ function hrtime() {
 	return time[0] * 1000000000 + time[1];
 }
 
-if (process.argv.length == 3) {
+function hash(what) {
+	return crypto.createHash("sha1").update(what).digest("hex");
+}
+
+if (process.argv.length == 3 && process.argv[1].indexOf("parse_regexv2.js") > 0) {
 	// console.log(process.argv);
 	let warcFile = process.argv[2];
 	if (!fs.existsSync(warcFile)) {
@@ -204,9 +181,9 @@ if (process.argv.length == 3) {
 		process.exit();
 	}
 
-	/*const warcContent = { Body: fs.readFileSync(warcFile) };
+	const warcContent = { Body: fs.readFileSync(warcFile) };
 
-	exports.main(bufferToStream(warcContent.Body)
+	/*exports.main(bufferToStream(warcContent.Body)
 				.pipe(zlib.createGunzip())
 				.pipe(new WARCStreamTransform()));*/
 

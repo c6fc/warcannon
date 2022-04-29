@@ -1,5 +1,5 @@
-local json(capacity, instanceTypes, subnets) = {
-    IamFleetRole: "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-ec2-spot-fleet-tagging-role",
+local json(capacity, instanceTypes, subnets, key) = {
+    IamFleetRole: "${aws_iam_role.warcannon_spotfleet_role.arn}",
     AllocationStrategy: "lowestPrice",
     TargetCapacity: capacity,
     TerminateInstancesWithExpiration: true,
@@ -7,8 +7,7 @@ local json(capacity, instanceTypes, subnets) = {
         {
             ImageId: "ami-0947d2ba12ee1ff75",
             InstanceType: instanceType,
-            SubnetId: subnets,
-            KeyName: "warcannon",
+            KeyName: "Yubikey",
             BlockDeviceMappings: [
                 {
                     DeviceName: "/dev/sda1",
@@ -24,11 +23,13 @@ local json(capacity, instanceTypes, subnets) = {
             IamInstanceProfile: {
                 Arn: "${aws_iam_instance_profile.warcannon_instance_profile.arn}"
             },
-            SecurityGroups: [
-                {
-                    GroupId: "${aws_security_group.warcannon_node.id}"
-                }
-            ],
+            NetworkInterfaces: [{
+                DeviceIndex: 0,
+                DeleteOnTermination: true,
+                AssociatePublicIpAddress: true,
+                SubnetId: subnet,
+                Groups: ["${aws_security_group.warcannon_node.id}"]
+            }],
             TagSpecifications: [
                 {
                     ResourceType: "instance",
@@ -41,7 +42,10 @@ local json(capacity, instanceTypes, subnets) = {
                 }
             ],
             UserData: "${base64encode(data.template_file.userdata.rendered)}"
-        } for instanceType in instanceTypes
+        }
+
+        for instanceType in instanceTypes
+        for subnet in subnets
     ],
     TagSpecifications: [
         {

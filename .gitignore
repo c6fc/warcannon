@@ -9,3 +9,5 @@
 *userdata.sh
 *localResults.json
 *results/*
+render-*
+ENVVARS

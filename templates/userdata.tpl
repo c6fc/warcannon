@@ -3,9 +3,11 @@
 cd /root
 
 # Install NVM
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | /bin/bash
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
 
 yum install -y htop jq
 
@@ -23,7 +25,4 @@ wget `aws --region us-east-1 lambda get-function --function-name warcannon | jq 
 unzip function.zip
 npm install
 
-# node warcannon.js crawl-data/CC-MAIN-2020-10/warc.paths.gz 1 56000 1 warc-results
-node warcannon.js ${results_bucket} ${sqs_queue_url} ${parallelism_factor}
-
-# aws --region us-east-1 lambda invoke --function-name cc_loader --payload '{"crawl":"CC-MAIN-2020-34","chunk":4,"max":10}' /dev/stdout
+# node warcannon.js ${results_bucket} ${sqs_queue_url} ${parallelism_factor}
