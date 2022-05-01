@@ -2,7 +2,7 @@
 
 const yargs = require('yargs');
 const colors = require('@colors/colors');
-const { WARCannon } = require('./warcannonv2.js');
+const { WARCannon } = require('./warcannon.js');
 
 yargs
 	.usage("Syntax: $0 <command> [options]")

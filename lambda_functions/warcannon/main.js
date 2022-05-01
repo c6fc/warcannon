@@ -2,7 +2,7 @@
 
 const fs = require("fs");
 const aws = require('aws-sdk');
-const zlib = require('zlib')
+const zlib = require('minizlib')
 const crypto = require('crypto');
 const parse_regex = require("./parse_regex.js");
 
@@ -27,7 +27,7 @@ exports.main = async function(event, context, callback) {
 			if (gzip) {
 				results = await parse_regex.main(
 					fs.createReadStream('/tmp/warcannon.testLocal')
-					.pipe(zlib.createGunzip())
+					.pipe(new zlib.Gunzip())
 					.pipe(new WARCStreamTransform()));
 			} else {
 				results = await parse_regex.main(
@@ -47,11 +47,14 @@ exports.main = async function(event, context, callback) {
 
 			results = await parse_regex.main(
 				bufferToStream(warcContent.Body)
-					.pipe(zlib.createGunzip())
+					.pipe(new zlib.Gunzip())
 					.pipe(new WARCStreamTransform()));
 		}
 
-		return callback(null, results);
+		// anynode apparently doesn't receive the callback.
+		// return callback(null, results);
+
+		return results;
 
 	} catch (err) {
 		console.log(err);

@@ -1,11 +1,12 @@
 local lambda_function(name, config, role_policy) = {
 	resource: {
 		aws_lambda_function: {
-			[name]: config + {
+			[name]: {
+				runtime: "nodejs14.x",
+			} + config + {
 				function_name: name,
 				filename: "../lambda_functions/zip_files/" + name + ".zip",
 				source_code_hash: "${data.archive_file." + name + ".output_base64sha256}",
-				runtime: "nodejs14.x",
 				role: "${aws_iam_role.lambda-" + name + ".arn}",
 				depends_on: ["data.archive_file." + name, "aws_iam_role_policy.lambda-" + name],
 			}
@@ -24,7 +25,7 @@ local lambda_function(name, config, role_policy) = {
 				name: "lambda_" + name,
 				description: "Lambda Role for " + name,
 				assume_role_policy: '{"Version": "2012-10-17","Statement": [{
-					"Effect": "Allow","Principal": {"Service": ["lambda.amazonaws.com", "edgelambda.amazonaws.com"]},
+					"Effect": "Allow","Principal": {"Service": ["edgelambda.amazonaws.com", "lambda.amazonaws.com"]},
 					"Action": "sts:AssumeRole"
 				}]}'
 			}

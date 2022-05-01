@@ -5,9 +5,10 @@ local json(capacity, instanceTypes, subnets, key) = {
     TerminateInstancesWithExpiration: true,
     LaunchSpecifications: [
         {
-            ImageId: "ami-0947d2ba12ee1ff75",
+            //ImageId: "ami-06b8f0fe534eceb95", //ARM
+            ImageId: "ami-0947d2ba12ee1ff75", //x86
             InstanceType: instanceType,
-            KeyName: "Yubikey",
+            //KeyName: "Yubikey",
             BlockDeviceMappings: [
                 {
                     DeviceName: "/dev/sda1",

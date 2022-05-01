@@ -8,8 +8,10 @@
     "aws-sdk": "^2.648.0",
     "cli-progress": "^3.6.1",
     "glob": "^7.1.6",
+    "minizlib": "^2.1.2",
     "node-warc": "^3.3.1",
-    "promise-queue": "^2.2.5"
+    "promise-queue": "^2.2.5",
+    "yargs": "^17.4.1"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

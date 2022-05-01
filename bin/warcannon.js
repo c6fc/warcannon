@@ -106,7 +106,19 @@ const sonnetry = new Sonnet({
 				}
 			});
 		})
-		.command("populate <crawl> [<chunk_size> <num_chunks>]", "Populates a job from the provided Crawl, optionally segmenting it by chunk size and count.", (yargs) => yargs, async (argv) => {
+		.command("populate <crawl> [chunk_size] [num_chunks]", "Populates a job from the provided Crawl, optionally segmenting it by chunk size and count.", (yargs) => {
+			return yargs.option('crawl', {
+				type: 'string',
+				description: 'A string matching precisely one crawl.'
+			}).option('chunk_size', {
+				type: 'number',
+				description: 'The number of WARCs to pack per chunk of work.',
+				default: 10
+			}).option('num_chunks', {
+				type: 'number',
+				description: 'How many chunks of work to send to the queue.'
+			})
+		}, async (argv) => {
 			const crawls = await s3.listObjectsV2({
 				Bucket: 'commoncrawl',
 				Prefix: 'cc-index/collections/',
@@ -133,8 +145,8 @@ const sonnetry = new Sonnet({
 				LogType: "None",
 				Payload: JSON.stringify({
 					crawl: matchingCrawls[0],
-					chunk: argv.chunk,
-					max: argv.max
+					chunk: argv.chunk_size,
+					max: argv.num_chunks
 				})
 			}).promise();
 
@@ -193,6 +205,11 @@ const sonnetry = new Sonnet({
 				return false
 			}).filter(e => e != false)
 
+			if (!warcannonSfrs.length) {
+				console.log(`[*] No active campaigns found.`.blue);
+				return true;
+			}
+
 			await ec2.cancelSpotFleetRequests({
 				SpotFleetRequestIds: warcannonSfrs,
 				TerminateInstances: true
@@ -223,6 +240,7 @@ const sonnetry = new Sonnet({
 
 			if (!fs.existsSync('/tmp/warcannon.testLocal')) {
 				await downloadS3File('commoncrawl', argv.warcPath, '/tmp/warcannon.testLocal');
+				//fs.writeFileSync('/tmp/warcannon.testLocal', "touched!");
 			}
 
 			resultFile = path.join(process.cwd(), 'results', 'testResults.json');
@@ -387,6 +405,7 @@ function showBanner() {
 		console.log("      @@@@@ @@@@@* %@@@@@@@@@@@@@@ @@@@@@@@@@@@@@ @@@@@     @@@@ @@@@@@@@@@@@@@");
 		console.log("     @@@@@**(@@@@@ %@@@@@  @@@@@@@ @@@@@  @@@@@@@ @@@@@@@@@@@@@/ @@@@@   @@@@@@");
 		console.log("   *@@@@@####@@@@@%%@@@@@*  @@@@@@ @@@@@*  @@@@@@   @@@@@@@@@%   @@@@@*   @@@@@");
+		console.log("         <a @c6fc project>");
 		console.log("\n\n");
 	}
 
@@ -435,7 +454,7 @@ function showBanner() {
 		console.log("        *####((#####/**/##****#*******/ * **/********** **** *  ******************************########(#####*##**(%%%%%/* ( #**(#*(***(*             ");
 		console.log("          *####(#########*(***** (#*//(# ** ****                           ***** ***********((###############*##%**/(***/* #**/****                  ");
 		console.log("            */(##****(########(#**#***********                               ****************** ###########****(##%*****/***( **                     ");
-		console.log("                          * *******                <a c6fc project>           ******        **/*****############*/###*#(##**                         ");
+		console.log("                          * *******                <a @c6fc project>          ******        **/*****############*/###*#(##**                         ");
 		console.log("                                                                                                      ************** *                               ");
 		console.log("\n\n");
 	}
@@ -471,13 +490,13 @@ async function showStatus() {
 
 	const queueStatus = (queue.Attributes.ApproximateNumberOfMessages == 0) ? "EMPTY".blue : `${queue.Attributes.ApproximateNumberOfMessages} Messages`.green;
 
-	console.log(`Deployed [ ${"YES".green} ] SQS Status: [ ${queueStatus}] `);
+	console.log(`Deployed [ ${"YES".green} ] SQS Status: [ ${queueStatus} ] `);
 
 	if (!sfr) {
 		console.log(`Job Status: [ ${ "INACTIVE".red } ]`);
 	} else {
 		console.log(`Job Status: [ ${ sfr.SpotFleetRequestState.blue } ] [ ${sfr.SpotFleetRequestId.blue} ]`);
-		console.log(`Requested Nodes: ${settings.nodeCapacity.blue}x [ ${settings.nodeInstanceType.blue} ]`);
+		//console.log(`Requested Nodes: ${settings.nodeCapacity.toString().blue}x [ ${settings.nodeInstanceType.blue} ]`);
 		console.log(`Active job url: https://${url}`);
 	}
 }

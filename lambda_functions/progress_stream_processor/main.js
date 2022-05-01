@@ -81,6 +81,8 @@ function cancelWarcannonSpotFleetRequests() {
 	return new Promise((success, failure) => {
 		var sfrsToTerminate = [];
 
+		return false;
+
 		console.log("cancelWarcannonSpotFleetRequests() triggered.");
 		ec2.describeSpotFleetRequests().promise()
 		.then((data) => {

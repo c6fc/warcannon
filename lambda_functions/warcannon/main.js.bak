@@ -4,7 +4,7 @@ const fs = require("fs");
 const aws = require('aws-sdk');
 const zlib = require('zlib')
 const crypto = require('crypto');
-const parse_regex = require("./parse_regexv2.js");
+const parse_regex = require("./parse_regex.js");
 
 const { Duplex } = require('stream');
 const { WARCStreamTransform } = require('node-warc');
