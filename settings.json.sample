@@ -1,13 +1,6 @@
 {
-	"backendBucket": "backend-terraform-warcannon-<random>",
-	"awsProfile": "default",
-	"debugLambda": true,
-
 	"nodeInstanceType": ["c5n.xlarge"],
 	"nodeCapacity": 1,
-	"nodeParallelism": 2,
-	"nodeMaxDuration": 86400,
-
-	"sshPubkey": "ssh-rsa whataver you@yourhost",
-	"allowSSHFrom": "8.8.8.8/32"
+	"nodeParallelism": 1.5,
+	"nodeMaxDuration": 3600
 }

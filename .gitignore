@@ -8,6 +8,6 @@
 *spot_request.json
 *userdata.sh
 *localResults.json
-*results/*
+*results*
 render-*
 ENVVARS

@@ -53,7 +53,7 @@ exports.main = async function(event, context, callback) {
 		// add the line to 'chunks' without the 'warc.gz' at the end.
 		chunk[mask].push(lines[a].substring(mask.length, lines[a].length - 8));
 
-		if (a % chunkSize == 0 || a == lines.length - 1) {
+		if ((a + 1) % chunkSize == 0 || a == lines.length) {
 			chunks.push(chunk);
 			chunk = {};
 			mask = "";
@@ -61,6 +61,7 @@ exports.main = async function(event, context, callback) {
 	}
 
 	console.log(chunks.length + " chunks, size " + JSON.stringify(chunks).length);
+
 	console.log("finished after " + (new Date() - start));
 
 	console.log(process.env.QUEUEURL);

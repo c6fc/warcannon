@@ -16,17 +16,17 @@ const combined = new RegExp(Object.keys(regex_patterns).map(e => {
 
 const s3 = new aws.S3({ region: "us-east-1" });
 
+const isLocal = !!process.env?.WARCANNON_IS_LOCAL;
+
 exports.main = function(parser) {
 
-	let isLocal = false;
 	let regexStartTime = 0;
 	let recordStartTime = 0;
 
 	const recordCost = { count: 0, total: 0 };
 
-	if (fs.existsSync('/tmp/warcannon.testLocal')) {
-		console.log('[+] Processing locally.');
-		isLocal = true;
+	if (isLocal) {
+		console.log('[*] parse_regex.js: Running in test mode.');
 	}
 
 	const parseStartTime = hrtime();
@@ -38,6 +38,33 @@ exports.main = function(parser) {
 			total_hits: 0,
 			regex_hits: {}
 		};
+
+		// Catch sigint when running locally, and save results.
+		if (isLocal) {
+			process.on('SIGINT', function() {
+				console.log(`\n\n[!] Caught interrupt. Saving results to [ ${ process.cwd() }/results/localResults.json ]\n`);
+				console.log("--- Performance statistics ---");
+				const record = roundAvg(recordCost.total, recordCost.count);
+				const totalTime = hrtime() - parseStartTime;
+				console.log(`Total processing time: ${totalTime}`);
+				console.log(`Average per-record Total processing time:  ${Math.round(totalTime / recordCost.count)}ns`);
+				console.log(`Average per-record RegExp processing time: ${record}ns`);
+
+				var total_mem = 0;
+				var mem = process.memoryUsage();
+				console.log("\n--- Memory statistics ---");
+				for (let key in mem) {
+					console.log(`${key} ${Math.round(mem[key] / 1024 / 1024 * 100) / 100} MB`);
+					total_mem += mem[key];
+				}
+
+				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
+				fs.writeFileSync('results/localResults.json', JSON.stringify(metrics));
+
+				console.log(`[*] Exiting gracefully.`);
+				process.exit();
+			});
+		}
 
 		Object.keys(regex_patterns).map((e) => {
 			metrics.regex_hits[e] = {};
@@ -57,7 +84,11 @@ exports.main = function(parser) {
 			records++;
 
 			// Only process response records with mime-types we care about.
-			if (record.warcHeader['WARC-Type'] != "response" || mime_types.indexOf(record.warcHeader['WARC-Identified-Payload-Type']) < 0) {
+			if (record.warcHeader['WARC-Type'] != "response") {
+				return true;
+			}
+
+			if (mime_types.length > 0 && !mime_types.includes(record.warcHeader['WARC-Identified-Payload-Type'])) {
 				return true;
 			}
 
@@ -124,6 +155,7 @@ exports.main = function(parser) {
 			process.send({message: metrics, type: "done"});
 
 			if (isLocal) {
+				console.log(`[+] Parser finished. Saving results to [ ${ process.cwd() }/results/localResults.json ]\n`);
 				console.log("--- Performance statistics ---");
 				const record = roundAvg(recordCost.total, recordCost.count);
 				const totalTime = hrtime() - parseStartTime;
@@ -140,7 +172,7 @@ exports.main = function(parser) {
 				}
 
 				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
-				// fs.writeFileSync('results/localResultsv2.json', JSON.stringify(metrics));
+				fs.writeFileSync('results/localResults.json', JSON.stringify(metrics));
 			}
 
 			success(metrics);
@@ -181,7 +213,12 @@ function hash(what) {
 	return crypto.createHash("sha1").update(what).digest("hex");
 }
 
-if (process.argv.length == 3) {
+if (!isLocal && !!process.argv?.[2]) {
+	if (process.argv?.[2]?.indexOf('crawl-data/') !== 0) {
+		console.log(`[!] parse_regex.js: Not isLocal, but got crawl [ ${process.argv[2]} ]`)
+		return false;
+	}
+
 	let warcFile = process.argv[2];
 
 	exports.main(s3.getObject({

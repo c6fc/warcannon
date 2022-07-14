@@ -137,6 +137,18 @@ const sonnetry = new Sonnet({
 				return false;
 			}
 
+			try {
+				await s3.headObject({
+					Bucket: "commoncrawl",
+					Key: "crawl-data/" + matchingCrawls[0] + "/warc.paths.gz"
+				}).promise();
+			} catch(e) {
+				console.log("[!] Unable to locate the index file for this crawl.".red)
+				console.log("[!] This might mean that the crawl is still in progress, or".red);
+				console.log("[!] is otherwise not ready for use. Try a different crawl.".red);
+				return false;
+			}
+
 			console.log('[*] Loading job. Please wait...'.blue);
 
 			const loader = await lambda.invoke({
@@ -183,6 +195,8 @@ const sonnetry = new Sonnet({
 			const items = await getFullS3PrefixList(Bucket, '');
 
 			const resultPath = path.join(process.cwd(), 'results');
+
+			ensurePathExists(resultPath);
 
 			const writes = items.map(e => {
 				return downloadS3File(Bucket, e.Key, path.join(resultPath, e.Key));
@@ -231,6 +245,11 @@ const sonnetry = new Sonnet({
 				default: false,
 				type: 'boolean',
 				description: 'Perform the test, ignoring changes to settings.json or matches.js.'
+			}).option('stream', {
+				alias: 's',
+				default: false,
+				type: 'boolean',
+				description: 'Stream the WARC instead of downloading it.'
 			});
 		}, async (argv) => {
 			if (needsRedeploy() && !argv.force) {
@@ -238,59 +257,22 @@ const sonnetry = new Sonnet({
 				return false;
 			}
 
-			if (!fs.existsSync('/tmp/warcannon.testLocal')) {
+			if (!argv.stream && !fs.existsSync('/tmp/warcannon.testLocal')) {
+				console.log("[!] Downloading ~1.2GiB WARC. This may take several minutes.");
 				await downloadS3File('commoncrawl', argv.warcPath, '/tmp/warcannon.testLocal');
-				//fs.writeFileSync('/tmp/warcannon.testLocal', "touched!");
 			}
 
+			ensurePathExists(path.join(process.cwd(), 'results'));
+
 			resultFile = path.join(process.cwd(), 'results', 'testResults.json');
+
 			!fs.existsSync(resultFile) || fs.unlinkSync(resultFile);
 
+			process.env.WARCANNON_IS_LOCAL = "true";
 			const localTest = require(path.join(process.cwd(), '/lambda_functions/warcannon/main.js'));
 
 			const waitForLocalTest = new Promise((success, failure) => {
-				localTest.main({}, {}, console.log);
-			});
-
-			await waitForLocalTest;
-
-			if (!fs.existsSync(resultFile)) {
-				console.log(`[+] Local test succeeded. Results are stored in ${path.relative(process.cwd(), resultFile)}`);
-				return true;
-			}
-
-			console.log(`[-] Local test produced no results.`.blue)
-			return false;
-		})
-		.command("testLocalV2 [warcPath]", "Test the filter function locally", (yargs) => {
-			return yargs.option('warcPath', {
-				alias: 'w',
-				default: 'crawl-data/CC-MAIN-2020-34/segments/1596439735792.85/warc/CC-MAIN-20200803083123-20200803113123-00033.warc.gz',
-				type: 'string',
-				description: 'The full path to a Common Crawl WARC.'
-			}).option('force', {
-				alias: 'f',
-				default: false,
-				type: 'boolean',
-				description: 'Perform the test, ignoring changes to settings.json or matches.js.'
-			});
-		}, async (argv) => {
-			if (needsRedeploy() && !argv.force) {
-				console.log(`[*] Run a deploy, or try again with -f.`.blue);
-				return false;
-			}
-
-			if (!fs.existsSync('/tmp/warcannon.testLocal')) {
-				await downloadS3File('commoncrawl', argv.warcPath, '/tmp/warcannon.testLocal');
-			}
-
-			resultFile = path.join(process.cwd(), 'results', 'testResults.json');
-			!fs.existsSync(resultFile) || fs.unlinkSync(resultFile);
-
-			const localTest = require(path.join(process.cwd(), '/lambda_functions/warcannon/mainv2.js'));
-
-			const waitForLocalTest = new Promise((success, failure) => {
-				localTest.main({}, {}, console.log);
+				localTest.main({ warc: argv.warcPath, stream: argv.stream }, {}, console.log);
 			});
 
 			await waitForLocalTest;
@@ -479,7 +461,7 @@ async function showStatus() {
 		ec2.describeSpotFleetRequests().promise()
 	]);
 
-	const url = distributions.DistributionList.Items.filter(e => e.name == "Warcannon")?.[0]?.DomainName;
+	const url = distributions.DistributionList.Items.filter(e => e.Comment == "Warcannon")?.[0]?.DomainName;
 	const sfr = sfrs.SpotFleetRequestConfigs.filter(e => {
 		if (e.SpotFleetRequestState == "active") {
 			return !!e.Tags.filter(t => t.Key == "Name" && t.Value == "Warcannon").length;
@@ -495,9 +477,9 @@ async function showStatus() {
 	if (!sfr) {
 		console.log(`Job Status: [ ${ "INACTIVE".red } ]`);
 	} else {
-		console.log(`Job Status: [ ${ sfr.SpotFleetRequestState.blue } ] [ ${sfr.SpotFleetRequestId.blue} ]`);
+		console.log(`Job Status: [ ${ sfr.SpotFleetRequestState.green } ] [ ${ sfr.SpotFleetRequestId.green } ]`);
 		//console.log(`Requested Nodes: ${settings.nodeCapacity.toString().blue}x [ ${settings.nodeInstanceType.blue} ]`);
-		console.log(`Active job url: https://${url}`);
+		console.log(`Active job url: ` + `https://${url}`.blue);
 	}
 }
 
@@ -631,18 +613,26 @@ function newerThan(first, second) {
 	const one = fs.statSync(first);
 	const two = fs.statSync(second);
 
-	return one.mtime > two.mtime;
+	return one.mtimeMs > two.mtimeMs;
+}
+
+function ensurePathExists(path) {
+	if (!fs.existsSync(path)) {
+		fs.mkdirSync(path);
+	}
+
+	return true;
 }
 
 function needsRedeploy() {
 	let redeploy = false;
 
-	if (newerThan('settings.json', 'render-warcannon/spot_request.json')) {
+	if (newerThan('settings.json', 'render-warcannon/backend.tf.json')) {
 		console.log(`[!] settings.json has been changed since last deploy.`.red);
 		redeploy = true;
 	}
 
-	if (newerThan('lambda_functions/warcannon/matches.js', 'render-warcannon/spot_request.json')) {
+	if (newerThan('lambda_functions/warcannon/matches.js', 'render-warcannon/backend.tf.json')) {
 		console.log(`[!] matches.js has been changed since last deploy.`.red);
 		redeploy = true;
 	}

@@ -214,7 +214,7 @@ class WARCannon {
 		}).promise();
 	}
 
-	uploadResults(force = false) {
+	async uploadResults(force = false) {
 
 		if (!force && this.lastUpload > new Date() - 10000) {
 			// console.log(`[-] Results were saved too recently. Skipping.`);
@@ -226,9 +226,21 @@ class WARCannon {
 		const results = JSON.stringify(this.metrics);
 
 		const key = this.results_key.toString();
-		if (results.length > (100 * 1024 * 1024)) {
+		if (results.length > (250 * 1024 * 1024)) {
+			console.log(`[+] Results is [ ${results.length / (1024 * 1024).toFixed(3)} ] MiB. Saving to ${this.results_key}. Before rotating key.`);
+			await s3.putObject({
+				Bucket: this.settings.results_bucket,
+				Key: this.results_key,
+				Body: results,
+				ContentType: "application/json"
+			}).promise();
+
 			this.metrics = { regex_hits: {}, total_hits: 0 };
 			this.results_key = this.generateResultKey();
+
+			console.log(`[*] Key rotated to ${this.results_key}`);
+
+			return Promise.resolve();
 		}
 
 		console.log(`[*] Saving results.`);
@@ -236,7 +248,7 @@ class WARCannon {
 
 		return s3.putObject({
 			Bucket: this.settings.results_bucket,
-			Key: key,
+			Key: this.results_key,
 			Body: results,
 			ContentType: "application/json"
 		}).promise();
@@ -291,14 +303,14 @@ class WARCannon {
 									// Concatenate unique URI results, up to 3 per unique result+domain combination.
 									Object.keys(matches).map(hash => {
 										metric[hash] ??= { value: matches[hash].value };
-										Object.keys(metric[hash])
+										Object.keys(matches[hash])
 											.filter(x => x !== "value")
 											.map(domain => {
 												metric[hash][domain] ??= [];
 
 												if (metric[hash][domain].length < 3) {
-													metric[hash][domain]
-														.concat(matches[hash][domain].filter(uri => metric[hash][domain].includes(uri)))
+													metric[hash][domain] = metric[hash][domain]
+														.concat(matches[hash][domain].filter(uri => !metric[hash][domain].includes(uri)))
 														.splice(0, 3);
 												}
 											});

@@ -336,47 +336,10 @@ local availabilityzones = aws.getAvailabilityZones()['us-east-1'];
 			Resource: "*"
 		}]
 	}),
-	'lambda_warcannon.tf.json':: lambda.lambda_function("warcannon", {
-		handler: "main.main",
-		timeout: 600,
-		memory_size: 3072,
-
-		environment: {
-			variables: {
-				DESTINATIONBUCKET: "${aws_s3_bucket.warcannon_results.id}"
-			}
-		},
-
-		vpc_config:: {
-			subnet_ids: ["${aws_subnet.warcannon-us-east-1-subnet-" + azi + ".id}" for azi in availabilityzones],
-			security_group_ids: ["${aws_security_group.lambda.id}"]
-		}
-	}, {
-		statement: [{
-			Sid: "s3",
-			Effect: "Allow",
-			Action: "s3:PutObject",
-			Resource: "${aws_s3_bucket.warcannon_results.arn}/*"
-		}, {
-			Sid: "getCommonCrawl",
-			Effect: "Allow",
-			Action: "s3:GetObject",
-			Resource: "arn:aws:s3:::commoncrawl/*"
-		}, {
-			Sid: "allowVPCAccess",
-			Effect: "Allow",
-            Action: [
-                "ec2:CreateNetworkInterface",
-                "ec2:DescribeNetworkInterfaces",
-                "ec2:DeleteNetworkInterface"
-            ],
-            Resource: "*"
-        }]
-	}),
 	'lambda_warcannon_singlefire.tf.json': lambda.lambda_function("warcannon", {
 		handler: "main.main",
 		timeout: 600,
-		memory_size: 3072,
+		memory_size: 3008,
 
 		runtime: "provided",
 		layers: ["arn:aws:lambda:us-east-1:072686360478:layer:node-16_4_2:3"],
@@ -414,27 +377,6 @@ local availabilityzones = aws.getAvailabilityZones()['us-east-1'];
         }]
 	}),
 	'null_resources.tf.json': null_resources.resource(settings),
-	'package.tf.json':: {
-		resource: {
-			aws_s3_bucket_object: {
-				package: {
-					bucket: "${aws_s3_bucket.static_site.id}",
-					key: "package.zip",
-					source: "%s/lambda_functions/zip_files/package.zip" % sonnetry.path(),
-					etag: "${data.archive_file.package.output_md5}"
-				}
-			}
-		},
-		data: {
-			archive_file: {
-				package: {
-					type: "zip",
-					source_dir: "%s/node.js/" % sonnetry.path(),
-					output_path: "%s/lambda_functions/zip_files/package.zip" % sonnetry.path(),
-				}
-			}
-		}
-	},
 	'provider.tf.json': {
 		terraform: {
 			required_providers: {
@@ -587,7 +529,7 @@ local availabilityzones = aws.getAvailabilityZones()['us-east-1'];
 				settings.nodeCapacity,
 				settings.nodeInstanceType,
 				["${aws_subnet.warcannon-us-east-1-subnet-" + azi + ".id}" for azi in availabilityzones],
-				[if settings.objectHas(settings, 'sshKeyName') then settings.sshKeyName else null]
+				if std.objectHas(settings, 'sshKeyName') && settings.sshKeyName != "" then settings.sshKeyName else null
 			), "\t"),
 		{}
 	),
