@@ -50,9 +50,17 @@ exports.main = function(parser) {
 				console.log("--- Performance statistics ---");
 				const record = roundAvg(recordCost.total, recordCost.count);
 				const totalTime = hrtime() - parseStartTime;
+				const avgTotal = totalTime / recordCost.count;
 				console.log(`Total processing time: ${totalTime}`);
-				console.log(`Average per-record Total processing time:  ${Math.round(totalTime / recordCost.count)}ns`);
+				console.log(`Average per-record Total processing time:  ${Math.round(avgTotal)}ns`);
 				console.log(`Average per-record RegExp processing time: ${record}ns`);
+
+				const ratio = avgTotal / record;
+				const estimatedCost = 25 / (avgTotal - record) * avgTotal;
+
+				console.log(`RegExp ration to overhead is ${ratio.toFixed(2)}`);
+				console.log(`Rough estimate cost for 72,000 WARC campaign: $${estimatedCost.toFixed(2)}`);
+				console.log("^ this will be wildly inaccurate (low) in 'testLocal -s' mode.");
 
 				var total_mem = 0;
 				var mem = process.memoryUsage();
@@ -163,9 +171,17 @@ exports.main = function(parser) {
 				console.log("--- Performance statistics ---");
 				const record = roundAvg(recordCost.total, recordCost.count);
 				const totalTime = hrtime() - parseStartTime;
+				const avgTotal = totalTime / recordCost.count;
 				console.log(`Total processing time: ${totalTime}`);
-				console.log(`Average per-record Total processing time:  ${Math.round(totalTime / recordCost.count)}ns`);
+				console.log(`Average per-record Total processing time:  ${Math.round(avgTotal)}ns`);
 				console.log(`Average per-record RegExp processing time: ${record}ns`);
+
+				const ratio = avgTotal / record;
+				const estimatedCost = 25 / (avgTotal - record) * avgTotal;
+
+				console.log(`RegExp ration to overhead is ${ratio.toFixed(2)}`);
+				console.log(`Rough estimate cost for 72,000 WARC campaign: $${estimatedCost.toFixed(2)}`);
+				console.log("^ this will be wildly inaccurate (low) in 'testLocal -s' mode.");
 
 				var total_mem = 0;
 				var mem = process.memoryUsage();

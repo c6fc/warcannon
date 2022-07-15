@@ -8,8 +8,8 @@
     "destroy": "cd render-warcannon && npx terraform destroy"
   },
   "engines": {
-    "node": ">=17.0.1",
-    "npm": ">=8.1.0"
+    "node": "17.0.1",
+    "npm": "8.1.0"
   },
   "repository": {
     "type": "git",

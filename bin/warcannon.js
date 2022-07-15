@@ -7,6 +7,14 @@ const path = require('path');
 const yargs = require('yargs');
 const colors = require('@colors/colors');
 const readline = require('readline');
+
+const expectedPath = path.resolve(__dirname, '..');
+
+if (process.cwd() !== expectedPath) {
+	console.log(`[!] The 'warcannon' command can only be used from ` + `${expectedPath}`.blue);
+	process.exit(1);
+}
+
 const { Sonnet } = require('@c6fc/sonnetry');
 
 const cf = new aws.CloudFront({ region: 'us-east-1' });
@@ -14,8 +22,12 @@ const s3 = new aws.S3({ region: 'us-east-1' });
 const ec2 = new aws.EC2({ region: 'us-east-1' });
 const sqs = new aws.SQS({ region: 'us-east-1' });
 const sts = new aws.STS({ region: 'us-east-1' });
-const lambda = new aws.Lambda({ region: 'us-east-1' });
-
+const lambda = new aws.Lambda({
+	region: 'us-east-1',
+	httpOptions: {
+		timeout: 600
+	}
+});
 
 let identity = false;
 let settings = false;
@@ -308,14 +320,21 @@ const resultsPath = `${os.homedir()}/.warcannon/`;
 
 			console.log('[*] Starting Lambda test. This may take several minutes, please be patient...'.blue);
 
-			const loader = await lambda.invoke({
-				FunctionName: "warcannon",
-				InvocationType: "RequestResponse",
-				LogType: "None",
-				Payload: JSON.stringify({
-					warc: argv.warcPath
-				})
-			}).promise();
+			try {
+				const loader = await lambda.invoke({
+					FunctionName: "warcannon",
+					InvocationType: "RequestResponse",
+					LogType: "None",
+					Payload: JSON.stringify({
+						warc: argv.warcPath
+					})
+				}).promise();
+			} catch(e) {
+				console.log(`[!] Lambda execution failed with error: ${e}\n`);
+				console.log(`[!] If the function timed out, your regex pattern is likely too expensive.`)
+				console.log(`[!] Consider optimizing your regex, otherwise stick to local tests or limited test campaigns.`);
+				return false;
+			}
 
 			if ([...loader.StatusCode+''][0] == '2') {
 				console.log(`[+] Loader completed successfully. Received response:\n${loader.Payload.toString()}`.green);

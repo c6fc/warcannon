@@ -15,12 +15,23 @@ if [[ ! -f /usr/bin/cmake ]]; then
 fi
 
 # install nvm and node
-if [[ ! -f $(which n) ]]; then
-	echo "[*] Installing @tj/n"
-	mkdir ~/bin
-	curl -L https://raw.githubusercontent.com/tj/n/master/bin/n -o ~/bin/n
-	chmod +x ~/bin/n
+if [[ ! -d /aws/mde/nvm ]]; then
+	echo "[*] Installing NVM"
+	sudo mkdir /aws/mde/nvm
+	sudo chown cloudshell-user:cloudshell-user /aws/mde/nvm
+
+	sudo ln -s /aws/mde/nvm ~/.nvm
+	curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash > /dev/null
 fi
+
+export NVM_DIR="/aws/mde/nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+echo "[*] Installing node.js ${NODE_VERSION}"
+nvm install $NODE_VERSION > /dev/null
+nvm alias default $NODE_VERSION
+nvm use $NODE_VERSION
 
 # Set up the larger storage environment:
 if [[ ! -d /aws/mde/warcannon ]]; then
@@ -34,8 +45,9 @@ if [[ ! -f /aws/mde/warcannon/README.md ]]; then
 	git clone https://github.com/c6fc/warcannon.git /aws/mde/warcannon > /dev/null
 fi
 
-# Run the deploy:
+# Install Node and deploy.
 cd /aws/mde/warcannon
+[[ -z "${GIT_BRANCH}" ]] || git checkout $GIT_BRANCH
 git pull
 
 echo
@@ -45,13 +57,13 @@ echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 echo
 echo
 
-npm install -g > /dev/null
+npm install > /dev/null
+npm link > /dev/null
 
-bash -c "npm run deploy < /dev/tty"
+mv settings.json.sample settings.json
 
-cd /aws/mde/warcannon
 export PS1="\e[1m\e[32m@c6fc/warcannon>\e[0m "
 
-echo "[+] Bootstrapping finished. Edit $PWD/lambda_functions/warcannon/matches.js then run\n"
+echo "[+] Bootstrapping finished. Edit $PWD/settings.json and $PWD/lambda_functions/warcannon/matches.js then run\n"
 echo "[+] [ warcannon deploy ]"
 return 0
