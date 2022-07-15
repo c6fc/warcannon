@@ -17,7 +17,11 @@ local lambda_function(name, config, role_policy) = {
 					"local-exec": {
 						command: "cd ${path.module}/../lambda_functions/" + name + "/ && npm install",
 					}
-				}]
+				}],
+
+				triggers: {
+					always: "${timestamp()}"
+				}
 			}
 		},
 		aws_iam_role: {

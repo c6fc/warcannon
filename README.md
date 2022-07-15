@@ -20,7 +20,16 @@ In all, WARCannon can process multiple regular expression patterns across 400TB 
 
 The fastest and easiest way to get up and running is to use the AWS CloudShell. Just paste this one-liner:
 
-```source <(curl https://raw.githubusercontent.com/c6fc/warcannon/master/cloudshell/deploy.sh)```
+```sh
+source <(curl https://raw.githubusercontent.com/c6fc/warcannon/master/cloudshell/deploy.sh)
+```
+
+If you want to use a non-master branch of WARCannon, just type:
+
+```sh
+export GIT_BRANCH=branch_name
+source <(curl https://raw.githubusercontent.com/c6fc/warcannon/$GIT_BRANCH/cloudshell/deploy.sh)
+```
 
 **Note: CloudShell deployment uses ephemeral storage, which means custom regex patterns will be lost when the CloudShell exits. If you are going to use WARCannon frequently, I recommend using the 'Local Installation' below.**
 
@@ -55,7 +64,8 @@ Edit `settings.json` to taste:
 
 To install, run this:
 ```sh
-$ npm install -g
+$ npm install
+$ npm link
 $ warcannon deploy
 ```
 

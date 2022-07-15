@@ -64,6 +64,6 @@ mv settings.json.sample settings.json
 
 export PS1="\e[1m\e[32m@c6fc/warcannon>\e[0m "
 
-echo "[+] Bootstrapping finished. Edit $PWD/settings.json and $PWD/lambda_functions/warcannon/matches.js then run\n"
+echo "[+] Bootstrapping finished. Edit $PWD/settings.json and $PWD/lambda_functions/warcannon/matches.js then run"
 echo "[+] [ warcannon deploy ]"
 return 0

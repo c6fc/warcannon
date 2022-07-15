@@ -25,7 +25,7 @@ const sts = new aws.STS({ region: 'us-east-1' });
 const lambda = new aws.Lambda({
 	region: 'us-east-1',
 	httpOptions: {
-		timeout: 600
+		timeout: 610000
 	}
 });
 
@@ -320,8 +320,10 @@ const resultsPath = `${os.homedir()}/.warcannon/`;
 
 			console.log('[*] Starting Lambda test. This may take several minutes, please be patient...'.blue);
 
+			let loader;
+
 			try {
-				const loader = await lambda.invoke({
+				loader = await lambda.invoke({
 					FunctionName: "warcannon",
 					InvocationType: "RequestResponse",
 					LogType: "None",
