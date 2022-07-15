@@ -1,6 +1,7 @@
 #! /usr/bin/env node
 
 const fs = require('fs');
+const os = require('os');
 const aws = require('aws-sdk'); 
 const path = require('path');
 const yargs = require('yargs');
@@ -23,6 +24,8 @@ const sonnetry = new Sonnet({
 	renderPath: './render-warcannon',
 	cleanBeforeRender: true
 });
+
+const resultsPath = `${os.homedir()}/.warcannon/`;
 
 (async () => {
 
@@ -194,15 +197,15 @@ const sonnetry = new Sonnet({
 			const Bucket = await getWarcannonBucket();
 			const items = await getFullS3PrefixList(Bucket, '');
 
-			const resultPath = path.join(process.cwd(), 'results');
-
-			ensurePathExists(resultPath);
+			ensurePathExists(resultsPath);
 
 			const writes = items.map(e => {
-				return downloadS3File(Bucket, e.Key, path.join(resultPath, e.Key));
+				return downloadS3File(Bucket, e.Key, path.join(resultsPath, e.Key));
 			});
 
 			await Promise.all(writes);
+
+			console.log("[+] Sync'd results to " + `${resultsPath}`.blue);
 
 			return true;
 		})
@@ -262,9 +265,9 @@ const sonnetry = new Sonnet({
 				await downloadS3File('commoncrawl', argv.warcPath, '/tmp/warcannon.testLocal');
 			}
 
-			ensurePathExists(path.join(process.cwd(), 'results'));
+			ensurePathExists(resultsPath);
 
-			resultFile = path.join(process.cwd(), 'results', 'testResults.json');
+			resultFile = path.join(resultsPath, 'testResults.json');
 
 			!fs.existsSync(resultFile) || fs.unlinkSync(resultFile);
 
@@ -278,7 +281,7 @@ const sonnetry = new Sonnet({
 			await waitForLocalTest;
 
 			if (!fs.existsSync(resultFile)) {
-				console.log(`[+] Local test succeeded. Results are stored in ${path.relative(process.cwd(), resultFile)}`);
+				console.log(`[+] Local test succeeded. Results are stored in ${path.relative(resultsPath, resultFile)}`);
 				return true;
 			}
 
@@ -449,37 +452,43 @@ async function showStatus() {
 		return false;
 	}
 
-	const identity = await sts.getCallerIdentity().promise();
-	
-	const [queue, distributions, sfrs] = await Promise.all([
+	try {
+
+		const identity = await sts.getCallerIdentity().promise();
 		
-		sqs.getQueueAttributes({
-			QueueUrl: `https://sqs.us-east-1.amazonaws.com/${identity.Account}/warcannon_queue`,
-			AttributeNames: ["ApproximateNumberOfMessages"]
-		}).promise(),
-		cf.listDistributions().promise(),
-		ec2.describeSpotFleetRequests().promise()
-	]);
+		const [queue, distributions, sfrs] = await Promise.all([
+			
+			sqs.getQueueAttributes({
+				QueueUrl: `https://sqs.us-east-1.amazonaws.com/${identity.Account}/warcannon_queue`,
+				AttributeNames: ["ApproximateNumberOfMessages"]
+			}).promise(),
+			cf.listDistributions().promise(),
+			ec2.describeSpotFleetRequests().promise()
+		]);
 
-	const url = distributions.DistributionList.Items.filter(e => e.Comment == "Warcannon")?.[0]?.DomainName;
-	const sfr = sfrs.SpotFleetRequestConfigs.filter(e => {
-		if (e.SpotFleetRequestState == "active") {
-			return !!e.Tags.filter(t => t.Key == "Name" && t.Value == "Warcannon").length;
+		const url = distributions.DistributionList.Items.filter(e => e.Comment == "Warcannon")?.[0]?.DomainName;
+		const sfr = sfrs.SpotFleetRequestConfigs.filter(e => {
+			if (e.SpotFleetRequestState == "active") {
+				return !!e.Tags.filter(t => t.Key == "Name" && t.Value == "Warcannon").length;
+			}
+
+			return false;
+		})?.[0];
+
+		const queueStatus = (queue.Attributes.ApproximateNumberOfMessages == 0) ? "EMPTY".blue : `${queue.Attributes.ApproximateNumberOfMessages} Messages`.green;
+
+		console.log(`Deployed [ ${"YES".green} ] SQS Status: [ ${queueStatus} ] `);
+
+		if (!sfr) {
+			console.log(`Job Status: [ ${ "INACTIVE".red } ]`);
+		} else {
+			console.log(`Job Status: [ ${ sfr.SpotFleetRequestState.green } ] [ ${ sfr.SpotFleetRequestId.green } ]`);
+			//console.log(`Requested Nodes: ${settings.nodeCapacity.toString().blue}x [ ${settings.nodeInstanceType.blue} ]`);
+			console.log(`Active job url: ` + `https://${url}`.blue);
 		}
-
+	} catch(e) {
+		console.log(`Deployed [ ${"NO".red} ]; Run ${"warcannon deploy".blue} to get started`);
 		return false;
-	})?.[0];
-
-	const queueStatus = (queue.Attributes.ApproximateNumberOfMessages == 0) ? "EMPTY".blue : `${queue.Attributes.ApproximateNumberOfMessages} Messages`.green;
-
-	console.log(`Deployed [ ${"YES".green} ] SQS Status: [ ${queueStatus} ] `);
-
-	if (!sfr) {
-		console.log(`Job Status: [ ${ "INACTIVE".red } ]`);
-	} else {
-		console.log(`Job Status: [ ${ sfr.SpotFleetRequestState.green } ] [ ${ sfr.SpotFleetRequestId.green } ]`);
-		//console.log(`Requested Nodes: ${settings.nodeCapacity.toString().blue}x [ ${settings.nodeInstanceType.blue} ]`);
-		console.log(`Active job url: ` + `https://${url}`.blue);
 	}
 }
 

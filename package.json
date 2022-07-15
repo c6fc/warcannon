@@ -4,7 +4,12 @@
   "description": "Catastrophically powerful parallel WARC processing",
   "main": "bin/warcannon.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "deploy": "node bin/index.js deploy",
+    "destroy": "cd render-warcannon && npx terraform destroy"
+  },
+  "engines": {
+    "node": ">=17.0.1",
+    "npm": ">=8.1.0"
   },
   "repository": {
     "type": "git",

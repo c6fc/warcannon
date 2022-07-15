@@ -3,6 +3,7 @@
 var start = new Date();
 
 const fs = require("fs");
+const os = require("os");
 const aws = require("aws-sdk");
 const zlib = require('minizlib');
 const crypto = require('crypto');
@@ -18,6 +19,8 @@ const s3 = new aws.S3({ region: "us-east-1" });
 
 const isLocal = !!process.env?.WARCANNON_IS_LOCAL;
 
+let resultsPath = false;
+
 exports.main = function(parser) {
 
 	let regexStartTime = 0;
@@ -27,6 +30,7 @@ exports.main = function(parser) {
 
 	if (isLocal) {
 		console.log('[*] parse_regex.js: Running in test mode.');
+		resultsPath = `${os.homedir()}/.warcannon/`;
 	}
 
 	const parseStartTime = hrtime();
@@ -42,7 +46,7 @@ exports.main = function(parser) {
 		// Catch sigint when running locally, and save results.
 		if (isLocal) {
 			process.on('SIGINT', function() {
-				console.log(`\n\n[!] Caught interrupt. Saving results to [ ${ process.cwd() }/results/localResults.json ]\n`);
+				console.log(`\n\n[!] Caught interrupt. Saving results to [ ` + `${ resultsPath }localResults.json`.blue + ` ]\n`);
 				console.log("--- Performance statistics ---");
 				const record = roundAvg(recordCost.total, recordCost.count);
 				const totalTime = hrtime() - parseStartTime;
@@ -59,9 +63,9 @@ exports.main = function(parser) {
 				}
 
 				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
-				fs.writeFileSync('results/localResults.json', JSON.stringify(metrics));
+				fs.writeFileSync(`${resultsPath}localResults.json`, JSON.stringify(metrics));
 
-				console.log(`[*] Exiting gracefully.`);
+				console.log(`\n[*] Exiting gracefully.`);
 				process.exit();
 			});
 		}
@@ -155,7 +159,7 @@ exports.main = function(parser) {
 			process.send({message: metrics, type: "done"});
 
 			if (isLocal) {
-				console.log(`[+] Parser finished. Saving results to [ ${ process.cwd() }/results/localResults.json ]\n`);
+				console.log(`\n\n[+] Parser finished. Saving results to [ ` + `${ resultsPath }localResults.json`.blue + ` ]\n`);
 				console.log("--- Performance statistics ---");
 				const record = roundAvg(recordCost.total, recordCost.count);
 				const totalTime = hrtime() - parseStartTime;
@@ -172,7 +176,7 @@ exports.main = function(parser) {
 				}
 
 				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
-				fs.writeFileSync('results/localResults.json', JSON.stringify(metrics));
+				fs.writeFileSync(`${resultsPath}localResults.json`, JSON.stringify(metrics));
 			}
 
 			success(metrics);
