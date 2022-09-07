@@ -1,11 +1,20 @@
 #! /usr/bin/env node
 
 const fs = require('fs');
+const os = require('os');
 const aws = require('aws-sdk'); 
 const path = require('path');
 const yargs = require('yargs');
 const colors = require('@colors/colors');
 const readline = require('readline');
+
+const expectedPath = path.resolve(__dirname, '..');
+
+if (process.cwd() !== expectedPath) {
+	console.log(`[!] The 'warcannon' command can only be used from ` + `${expectedPath}`.blue);
+	process.exit(1);
+}
+
 const { Sonnet } = require('@c6fc/sonnetry');
 
 const cf = new aws.CloudFront({ region: 'us-east-1' });
@@ -13,8 +22,12 @@ const s3 = new aws.S3({ region: 'us-east-1' });
 const ec2 = new aws.EC2({ region: 'us-east-1' });
 const sqs = new aws.SQS({ region: 'us-east-1' });
 const sts = new aws.STS({ region: 'us-east-1' });
-const lambda = new aws.Lambda({ region: 'us-east-1' });
-
+const lambda = new aws.Lambda({
+	region: 'us-east-1',
+	httpOptions: {
+		timeout: 610000
+	}
+});
 
 let identity = false;
 let settings = false;
@@ -23,6 +36,8 @@ const sonnetry = new Sonnet({
 	renderPath: './render-warcannon',
 	cleanBeforeRender: true
 });
+
+const resultsPath = `${os.homedir()}/.warcannon/`;
 
 (async () => {
 
@@ -194,15 +209,15 @@ const sonnetry = new Sonnet({
 			const Bucket = await getWarcannonBucket();
 			const items = await getFullS3PrefixList(Bucket, '');
 
-			const resultPath = path.join(process.cwd(), 'results');
-
-			ensurePathExists(resultPath);
+			ensurePathExists(resultsPath);
 
 			const writes = items.map(e => {
-				return downloadS3File(Bucket, e.Key, path.join(resultPath, e.Key));
+				return downloadS3File(Bucket, e.Key, path.join(resultsPath, e.Key));
 			});
 
 			await Promise.all(writes);
+
+			console.log("[+] Sync'd results to " + `${resultsPath}`.blue);
 
 			return true;
 		})
@@ -262,9 +277,9 @@ const sonnetry = new Sonnet({
 				await downloadS3File('commoncrawl', argv.warcPath, '/tmp/warcannon.testLocal');
 			}
 
-			ensurePathExists(path.join(process.cwd(), 'results'));
+			ensurePathExists(resultsPath);
 
-			resultFile = path.join(process.cwd(), 'results', 'testResults.json');
+			resultFile = path.join(resultsPath, 'testResults.json');
 
 			!fs.existsSync(resultFile) || fs.unlinkSync(resultFile);
 
@@ -278,7 +293,7 @@ const sonnetry = new Sonnet({
 			await waitForLocalTest;
 
 			if (!fs.existsSync(resultFile)) {
-				console.log(`[+] Local test succeeded. Results are stored in ${path.relative(process.cwd(), resultFile)}`);
+				console.log(`[+] Local test succeeded. Results are stored in ${path.relative(resultsPath, resultFile)}`);
 				return true;
 			}
 
@@ -305,14 +320,23 @@ const sonnetry = new Sonnet({
 
 			console.log('[*] Starting Lambda test. This may take several minutes, please be patient...'.blue);
 
-			const loader = await lambda.invoke({
-				FunctionName: "warcannon",
-				InvocationType: "RequestResponse",
-				LogType: "None",
-				Payload: JSON.stringify({
-					warc: argv.warcPath
-				})
-			}).promise();
+			let loader;
+
+			try {
+				loader = await lambda.invoke({
+					FunctionName: "warcannon",
+					InvocationType: "RequestResponse",
+					LogType: "None",
+					Payload: JSON.stringify({
+						warc: argv.warcPath
+					})
+				}).promise();
+			} catch(e) {
+				console.log(`[!] Lambda execution failed with error: ${e}\n`);
+				console.log(`[!] If the function timed out, your regex pattern is likely too expensive.`)
+				console.log(`[!] Consider optimizing your regex, otherwise stick to local tests or limited test campaigns.`);
+				return false;
+			}
 
 			if ([...loader.StatusCode+''][0] == '2') {
 				console.log(`[+] Loader completed successfully. Received response:\n${loader.Payload.toString()}`.green);
@@ -366,6 +390,34 @@ const sonnetry = new Sonnet({
 
 			console.log("[+] Spot fleet request has been sent, and nodes should start coming online within ~5 minutes.".green);
 			console.log("[+] Monitor node status and progress at ".green + `https://${url}`.blue + "\n");
+			
+			return true
+		})
+		.command("quickResults [pattern]", "Show the value and source of locally-synced results from files matching an optional pattern.", (yargs) => yargs, async (argv) => {
+			const quickResults = fs.readdirSync(resultsPath)
+				.filter(e => !!!argv.pattern || e.indexOf(argv.pattern))
+				.reduce((a, e) => {
+					const results = JSON.parse(fs.readFileSync(path.join(resultsPath, e)));
+
+					Object.keys(results.regex_hits)
+						.map(regex => {
+							if (!!!a[regex]) {
+								a[regex] = {};
+							};
+
+							Object.keys(results.regex_hits[regex])
+								.filter(x => !!!a[regex][x.value])
+								.map(x => {
+									x = results.regex_hits[regex][x];
+									const firstSource = Object.keys(x).filter(k => k != "value")[0]
+									a[regex][x.value] = x[firstSource][0];
+								});
+						});
+
+					return a;
+				}, {});
+
+				console.log(JSON.stringify(quickResults));
 			
 			return true
 		})
@@ -449,37 +501,43 @@ async function showStatus() {
 		return false;
 	}
 
-	const identity = await sts.getCallerIdentity().promise();
-	
-	const [queue, distributions, sfrs] = await Promise.all([
+	try {
+
+		const identity = await sts.getCallerIdentity().promise();
 		
-		sqs.getQueueAttributes({
-			QueueUrl: `https://sqs.us-east-1.amazonaws.com/${identity.Account}/warcannon_queue`,
-			AttributeNames: ["ApproximateNumberOfMessages"]
-		}).promise(),
-		cf.listDistributions().promise(),
-		ec2.describeSpotFleetRequests().promise()
-	]);
+		const [queue, distributions, sfrs] = await Promise.all([
+			
+			sqs.getQueueAttributes({
+				QueueUrl: `https://sqs.us-east-1.amazonaws.com/${identity.Account}/warcannon_queue`,
+				AttributeNames: ["ApproximateNumberOfMessages"]
+			}).promise(),
+			cf.listDistributions().promise(),
+			ec2.describeSpotFleetRequests().promise()
+		]);
 
-	const url = distributions.DistributionList.Items.filter(e => e.Comment == "Warcannon")?.[0]?.DomainName;
-	const sfr = sfrs.SpotFleetRequestConfigs.filter(e => {
-		if (e.SpotFleetRequestState == "active") {
-			return !!e.Tags.filter(t => t.Key == "Name" && t.Value == "Warcannon").length;
+		const url = distributions.DistributionList.Items.filter(e => e.Comment == "Warcannon")?.[0]?.DomainName;
+		const sfr = sfrs.SpotFleetRequestConfigs.filter(e => {
+			if (e.SpotFleetRequestState == "active") {
+				return !!e.Tags.filter(t => t.Key == "Name" && t.Value == "Warcannon").length;
+			}
+
+			return false;
+		})?.[0];
+
+		const queueStatus = (queue.Attributes.ApproximateNumberOfMessages == 0) ? "EMPTY".blue : `${queue.Attributes.ApproximateNumberOfMessages} Messages`.green;
+
+		console.log(`Deployed [ ${"YES".green} ] SQS Status: [ ${queueStatus} ] `);
+
+		if (!sfr) {
+			console.log(`Job Status: [ ${ "INACTIVE".red } ]`);
+		} else {
+			console.log(`Job Status: [ ${ sfr.SpotFleetRequestState.green } ] [ ${ sfr.SpotFleetRequestId.green } ]`);
+			//console.log(`Requested Nodes: ${settings.nodeCapacity.toString().blue}x [ ${settings.nodeInstanceType.blue} ]`);
+			console.log(`Active job url: ` + `https://${url}`.blue);
 		}
-
+	} catch(e) {
+		console.log(`Deployed [ ${"NO".red} ]; Run ${"warcannon deploy".blue} to get started`);
 		return false;
-	})?.[0];
-
-	const queueStatus = (queue.Attributes.ApproximateNumberOfMessages == 0) ? "EMPTY".blue : `${queue.Attributes.ApproximateNumberOfMessages} Messages`.green;
-
-	console.log(`Deployed [ ${"YES".green} ] SQS Status: [ ${queueStatus} ] `);
-
-	if (!sfr) {
-		console.log(`Job Status: [ ${ "INACTIVE".red } ]`);
-	} else {
-		console.log(`Job Status: [ ${ sfr.SpotFleetRequestState.green } ] [ ${ sfr.SpotFleetRequestId.green } ]`);
-		//console.log(`Requested Nodes: ${settings.nodeCapacity.toString().blue}x [ ${settings.nodeInstanceType.blue} ]`);
-		console.log(`Active job url: ` + `https://${url}`.blue);
 	}
 }
 
