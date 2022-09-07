@@ -393,6 +393,34 @@ const resultsPath = `${os.homedir()}/.warcannon/`;
 			
 			return true
 		})
+		.command("quickResults [pattern]", "Show the value and source of locally-synced results from files matching an optional pattern.", (yargs) => yargs, async (argv) => {
+			const quickResults = fs.readdirSync(resultsPath)
+				.filter(e => !!!argv.pattern || e.indexOf(argv.pattern))
+				.reduce((a, e) => {
+					const results = JSON.parse(fs.readFileSync(path.join(resultsPath, e)));
+
+					Object.keys(results.regex_hits)
+						.map(regex => {
+							if (!!!a[regex]) {
+								a[regex] = {};
+							};
+
+							Object.keys(results.regex_hits[regex])
+								.filter(x => !!!a[regex][x.value])
+								.map(x => {
+									x = results.regex_hits[regex][x];
+									const firstSource = Object.keys(x).filter(k => k != "value")[0]
+									a[regex][x.value] = x[firstSource][0];
+								});
+						});
+
+					return a;
+				}, {});
+
+				console.log(JSON.stringify(quickResults));
+			
+			return true
+		})
 		.help("help")
 		.argv;
 })();
