@@ -11,7 +11,7 @@
 
   </head>
 
-  <body ng-app="warcannon" ng-controller="statusCtrl">
+  <body ng-app="warcannon" ng-controller="statusCtrl" class="bg-dark text-white">
 
     <div class="container-fluid">
 
@@ -26,7 +26,7 @@
 			</div>
 
 			<div class="row">
-      	<div class="col-xl-3 col-lg-4 col-sm-6 col-12 border border-secondary" ng-repeat="instance in progress.metrics" ng-show="loaded">
+      	<div class="col-xl-3 col-lg-4 col-sm-6 col-12 border border-white" ng-repeat="instance in progress.metrics" ng-show="loaded">
       		<div class="text-center">
       			<b>{{ instance.instanceId }} @ {{ instance.timestamp | momentfn:'fromNow' }}</b>
       		</div>
@@ -34,6 +34,7 @@
       		<div>
       			<small>
               <b>State:</b>&nbsp;{{ instance.state }};
+              <b>Matches:</b>&nbsp;{{ instance.totalHits }};
               <br>
               <b>Queue:</b>&nbsp;{{ instance.warcListLength }};
               <b>Parallelism:</b>&nbsp;{{ instance.parallelism }};
@@ -48,11 +49,15 @@
       			</small>
       		</div>
 
-      		<div class="progress-bar" ng-class="{ 'bg-success': perc > 0 }" role="progressbar" aria-valuenow="{{ (perc > 0) ? perc : 100 }}" aria-valuemin="0" aria-valuemax="100" style="width:{{ (perc > 0) ? perc : 100 }}%; font-size: 10px; margin-top: 1px;" ng-repeat="(warc, perc) in instance.progress">
-            <small>
-              {{ (perc < 0) ? 'Downloading' : perc }}
-            </small>
-      		</div>
+          <div class="row row-flex justify-content-center">
+            <div class="col-2 m-0 p-0 border border-white" ng-repeat="(warc, perc) in instance.progress">
+          		<div class="progress-bar" ng-class="{ 'bg-success': perc > 0 }" role="progressbar" aria-valuenow="{{ (perc > 0) ? perc : 100 }}" aria-valuemin="0" aria-valuemax="100" style="width:{{ (perc > 0) ? perc : 100 }}%; font-size: 10px; margin-top: 1px;">
+                <small>
+                  {{ (perc < 0) ? 'Downloading' : perc }}
+                </small>
+          		</div>
+            </div>
+          </div>
       	</div>
       </div>
 

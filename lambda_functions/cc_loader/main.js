@@ -6,7 +6,9 @@ const zlib = require('zlib');
 var s3 = new aws.S3({region: "us-east-1"});
 var sqs = new aws.SQS({region: "us-east-1"});
 
-exports.main = function(event, context, callback) {
+exports.main = async function(event, context, callback) {
+
+	console.log(event);
 
 	var start = new Date();
 
@@ -21,132 +23,82 @@ exports.main = function(event, context, callback) {
 
 	var promiseError = false;
 
-	return s3.getObject({
+	const s3obj = await s3.getObject({
 		Bucket: "commoncrawl",
 		Key: "crawl-data/" + event.crawl + "/warc.paths.gz"
 	}).promise()
-	.then((s3obj) => {
-		console.log("s3 promise returned after " + (new Date() - start));
 
-		return new Promise((success, failure) => {
-			zlib.gunzip(s3obj.Body, function(err, data) {
-				if (err) {
-					promiseError = true;
+	console.log("s3 promise returned after " + (new Date() - start));
 
-					console.log(err);
-					return Promise.reject(callback(err));
-				}
+	const fileList = zlib.gunzipSync(s3obj.Body)
 
-				return success(data);
+	console.log("zlib promise returned after " + (new Date() - start));
+
+	var lines = fileList.toString().split("\n");
+	lines.pop();
+
+	segmentCount = lines.length;
+
+	var mask = false;
+	var chunk = {};
+	var chunks = [];
+	
+	for (let a = 0; a < lines.length; a++) {
+		if (!mask || lines[a].substring(0, mask.length) != mask) {
+			let next = (a + 10 > lines.length - 1) ? lines.length - 1 : a + 10;
+			mask = getMask(lines[a], lines[next]);
+			chunk[mask] = [];
+		}
+
+		// add the line to 'chunks' without the 'warc.gz' at the end.
+		chunk[mask].push(lines[a].substring(mask.length, lines[a].length - 8));
+
+		if ((a + 1) % chunkSize == 0 || a == lines.length) {
+			chunks.push(chunk);
+			chunk = {};
+			mask = "";
+		}
+	}
+
+	console.log(chunks.length + " chunks, size " + JSON.stringify(chunks).length);
+
+	console.log("finished after " + (new Date() - start));
+
+	console.log(process.env.QUEUEURL);
+
+	var sqsPromises = [];
+	for (let a = 0; a < chunks.length / 10 && a < maxChunks; a++) {
+
+		var entries = [];
+		for (let x = 0; x <= 9 && ((a * 10) + x) < maxChunks; x++) {
+			if (!chunks[(a * 10) + x]) {
+				continue;
+			}
+			
+			entries.push({
+				Id: event.crawl + "-" + ((a * 10) + x),
+				MessageBody: JSON.stringify(chunks[(a * 10) + x])
 			});
-		})
-	}, (err) => {
-		promiseError = true;
-
-		console.log(err);
-		return Promise.reject(callback(err));
-	}).then((data) => {
-
-		if (promiseError) {
-			return Promise.reject('Skipping due to previous error');
 		}
 
-		console.log("zlib promise returned after " + (new Date() - start));
-
-		var lines = data.toString().split("\n");
-		lines.pop();
-
-		segmentCount = lines.length;
-
-		var mask = false;
-		var chunk = {};
-		var chunks = [];
-		
-		for (let a = 0; a < lines.length; a++) {
-			if (!mask || lines[a].substring(0, mask.length) != mask) {
-				let next = (a + 10 > lines.length - 1) ? lines.length - 1 : a + 10;
-				mask = getMask(lines[a], lines[next]);
-				chunk[mask] = [];
-			}
-
-			// add the line to 'chunks' without the 'warc.gz' at the end.
-			chunk[mask].push(lines[a].substring(mask.length, lines[a].length - 8));
-
-			if (a % chunkSize == 0 || a == lines.length - 1) {
-				chunks.push(chunk);
-				chunk = {};
-				mask = "";
-			}
+		if (entries.length > 0) {
+			sqsPromises.push(sqs.sendMessageBatch({
+				Entries: entries,
+				QueueUrl: process.env.QUEUEURL
+			}).promise());
 		}
+	}
 
-		return Promise.resolve(chunks);
-	}, (err) => {
-		promiseError = true;
+	console.log("Created " + sqsPromises.length + " SQS batches");
 
-		console.log(err);
-		return Promise.reject(callback(err));
-	}).then((chunks) => {
-		
-		if (promiseError) {
-			return Promise.reject('Skipping due to previous error');
-		}
+	const results = await Promise.all(sqsPromises);
 
-		console.log(chunks.length + " chunks, size " + JSON.stringify(chunks).length);
-		console.log("finished after " + (new Date() - start));
+	let totalCount = 0;
+	results.forEach((result) => {
+		totalCount += result.Successful.length;
+	});
 
-		console.log(process.env.QUEUEURL);
-
-		var sqsPromises = [];
-		for (let a = 0; a < chunks.length / 10 && a < maxChunks; a++) {
-
-			var entries = [];
-			for (let x = 0; x <= 9 && ((a * 10) + x) < maxChunks; x++) {
-				if (!chunks[(a * 10) + x]) {
-					continue;
-				}
-				
-				entries.push({
-					Id: event.crawl + "-" + ((a * 10) + x),
-					MessageBody: JSON.stringify(chunks[(a * 10) + x])
-				});
-			}
-
-			if (entries.length > 0) {
-				sqsPromises.push(sqs.sendMessageBatch({
-					Entries: entries,
-					QueueUrl: process.env.QUEUEURL
-				}).promise());
-			}
-		}
-
-		console.log("Created " + sqsPromises.length + " SQS batches");
-
-		return Promise.all(sqsPromises);
-
-	}, (err) => {
-		promiseError = true;
-		
-		console.log(err);
-		return Promise.reject(callback(err));
-	}).then((results) => {
-		
-		if (promiseError) {
-			return Promise.reject('Skipping due to previous error');
-		}
-
-		let totalCount = 0;
-		results.forEach((result) => {
-			totalCount += result.Successful.length;
-		});
-
-		return Promise.resolve(callback(null,  "Created " + totalCount + " chunks of " + chunkSize + " from " + segmentCount + " available segments"));
-
-	}, (err) => {
-		promiseError = true;
-		
-		console.log(err);
-		return Promise.reject(callback(err));
-	})
+	return callback(null,  `Created ${totalCount} chunks of ${chunkSize} from ${segmentCount} available segments`);
 }
 
 function getMask(left, right) {

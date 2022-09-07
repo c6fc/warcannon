@@ -3,40 +3,88 @@
 var start = new Date();
 
 const fs = require("fs");
-const zlib = require('zlib')
+const os = require("os");
+const aws = require("aws-sdk");
+const zlib = require('minizlib');
+const crypto = require('crypto');
 const { Duplex } = require('stream');
 const { WARCStreamTransform } = require('node-warc');
 const { mime_types, domains, regex_patterns, custom_functions } = require("./matches.js");
 
+const combined = new RegExp(Object.keys(regex_patterns).map(e => {
+	return `(?<${e}>${regex_patterns[e].source})`
+}).join("|"), 'g');
+
+const s3 = new aws.S3({ region: "us-east-1" });
+
+const isLocal = !!process.env?.WARCANNON_IS_LOCAL;
+
+let resultsPath = false;
+
 exports.main = function(parser) {
 
-	let isLocal = false;
 	let regexStartTime = 0;
 	let recordStartTime = 0;
-	const regexCost = {};
+
 	const recordCost = { count: 0, total: 0 };
 
-	if (fs.existsSync('/tmp/warcannon.testLocal')) {
-		isLocal = true;
+	if (isLocal) {
+		console.log('[*] parse_regex.js: Running in test mode.');
+		resultsPath = `${os.homedir()}/.warcannon/`;
 	}
+
+	const parseStartTime = hrtime();
 
 	return new Promise((success, failure) => {
 		process.send = (typeof process.send == "function") ? process.send : console.log;
 
-		var metrics = {
+		const metrics = {
 			total_hits: 0,
 			regex_hits: {}
 		};
 
-		Object.keys(regex_patterns).forEach((e) => {
-			metrics.regex_hits[e] = {
-				domains: {}
-			};
+		// Catch sigint when running locally, and save results.
+		if (isLocal) {
+			process.on('SIGINT', function() {
+				console.log(`\n\n[!] Caught interrupt. Saving results to [ ` + `${ resultsPath }localResults.json`.blue + ` ]\n`);
+				console.log("--- Performance statistics ---");
+				const record = roundAvg(recordCost.total, recordCost.count);
+				const totalTime = hrtime() - parseStartTime;
+				const avgTotal = totalTime / recordCost.count;
+				console.log(`Total processing time: ${totalTime}`);
+				console.log(`Average per-record Total processing time:  ${Math.round(avgTotal)}ns`);
+				console.log(`Average per-record RegExp processing time: ${record}ns`);
+
+				const ratio = avgTotal / record;
+				const estimatedCost = 25 / (avgTotal - record) * avgTotal;
+
+				console.log(`RegExp ration to overhead is ${ratio.toFixed(2)}`);
+				console.log(`Rough estimate cost for 72,000 WARC campaign: $${estimatedCost.toFixed(2)}`);
+				console.log("^ this will be wildly inaccurate (low) in 'testLocal -s' mode.");
+
+				var total_mem = 0;
+				var mem = process.memoryUsage();
+				console.log("\n--- Memory statistics ---");
+				for (let key in mem) {
+					console.log(`${key} ${Math.round(mem[key] / 1024 / 1024 * 100) / 100} MB`);
+					total_mem += mem[key];
+				}
+
+				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
+				fs.writeFileSync(`${resultsPath}localResults.json`, JSON.stringify(metrics));
+
+				console.log(`\n[*] Exiting gracefully.`);
+				process.exit();
+			});
+		}
+
+		Object.keys(regex_patterns).map((e) => {
+			metrics.regex_hits[e] = {};
 		});
 
-		var records = 0;
-		var records_processed = 0;
-		var last_status_report = new Date();
+		let records = 0;
+		let records_processed = 0;
+		let last_status_report = new Date();
 
 		parser.on('data', (record) => {
 
@@ -48,24 +96,19 @@ exports.main = function(parser) {
 			records++;
 
 			// Only process response records with mime-types we care about.
-			if (record.warcHeader['WARC-Type'] != "response" || mime_types.indexOf(record.warcHeader['WARC-Identified-Payload-Type']) < 0) {
+			if (record.warcHeader['WARC-Type'] != "response") {
 				return true;
 			}
 
-			var domain = record.warcHeader['WARC-Target-URI'].split('/')[2];
+			if (mime_types.length > 0 && !mime_types.includes(record.warcHeader['WARC-Identified-Payload-Type'])) {
+				return true;
+			}
+
+			const domain = record.warcHeader['WARC-Target-URI'].split('/')[2];
 
 			// Only process warcs in the domains we specify.
-			let parserecord = true;
-			domains.some((domain_match) => {
-				parserecord = domain.indexOf(domain_match) > -1;
-				if (parserecord) {
-					console.log(domain);
-				}
-				return parserecord;
-			});
-
-			if (!parserecord) {
-				return false;
+			if (!!domains.length && !domains.includes(domain)) {
+				return true;
 			}
 
 			records_processed++;
@@ -74,55 +117,42 @@ exports.main = function(parser) {
 				recordStartTime = hrtime();
 			}
 
-			Object.keys(regex_patterns).forEach((e) => {
-				if (isLocal) {
-					if (!regexCost.hasOwnProperty(e)) {
-						regexCost[e] = { count: 0, total: 0 };
+			const matches = record.content.toString().matchAll(combined);
+
+			// matchAll is an iterator with one match per capture group per yield
+			// Capture groups with no match are undefined.
+			for (const match of matches) {
+				Object.keys(match.groups).map(e => {
+					if (!!!match.groups[e]) {
+						return false;
 					}
 
-					regexStartTime = hrtime();
-				}
+					let value = match.groups[e];
+					if (!!custom_functions[e]) {
+						value = custom_functions[e](value);
 
-				let matches = record.content.toString().match(regex_patterns[e]);
-
-				if (isLocal) {
-					regexCost[e].count++
-					regexCost[e].total += hrtime() - regexStartTime;
-				}
-
-				if (matches != null && custom_functions.hasOwnProperty(e)) {
-					let customMatches = [];
-					matches.forEach((match) => {
-						let customMatch = custom_functions[e](match);
-						if (customMatch != false) {
-							customMatches.push(customMatch);
+						// (return === false) drops the result
+						if (value === false) {
+							return false;
 						}
-					});
+					}
 
-					matches = (customMatches.length > 0) ? customMatches : null;
-				}
-
-				if (matches != null) {
 					metrics.total_hits++;
+					value = value.trim().replace(/['"]+/g, "");
+					const key = hash(value);
 
-					if (!metrics.regex_hits[e].domains.hasOwnProperty(domain)) {
-						metrics.regex_hits[e].domains[domain] = {
-							"matches": [],
-							"target_uris": []
-						};
-					};
+					metrics.regex_hits[e][key] ??= { value };
+					metrics.regex_hits[e][key][domain] ??= [];
 
-					matches.forEach((m) => {
-						if (m !== null) {
-							metrics.regex_hits[e].domains[domain].matches.push(m.trim().replace(/['"]+/g, ""));
-						}
-					})
+					let uri = record.warcHeader['WARC-Target-URI'];
+					let uris = metrics.regex_hits[e][key][domain];
 
-					if (metrics.regex_hits[e].domains[domain].target_uris.indexOf(record.warcHeader['WARC-Target-URI']) < 0) {
-						metrics.regex_hits[e].domains[domain].target_uris.push(record.warcHeader['WARC-Target-URI']);
+					if (uris.length < 3 && !uris.includes(uri)) {
+						uris.push(uri);
 					}
-				}
-			});
+
+				});
+			}
 
 			if (isLocal) {
 				recordCost.count++
@@ -132,23 +162,26 @@ exports.main = function(parser) {
 			return true;
 		});
 
-		parser.on('end', () => {
+		parser.on('end', function () {
 			
 			process.send({message: metrics, type: "done"});
 
 			if (isLocal) {
+				console.log(`\n\n[+] Parser finished. Saving results to [ ` + `${ resultsPath }localResults.json`.blue + ` ]\n`);
 				console.log("--- Performance statistics ---");
-				let record = roundAvg(recordCost.total, recordCost.count);
-				console.log("Average per-record processing time: " + record + "ns");
-				
-				let totalRegexCost = 0;
-				Object.keys(regexCost).forEach((e) => {
-					let self = roundAvg(regexCost[e].total, regexCost[e].count);
-					totalRegexCost += self;
-					console.log(toFixedLength(e, 20) + " -  Self: " + self + "ns; Of record: " + Math.round(self / record * 10000) / 100 + "%");
-				});
+				const record = roundAvg(recordCost.total, recordCost.count);
+				const totalTime = hrtime() - parseStartTime;
+				const avgTotal = totalTime / recordCost.count;
+				console.log(`Total processing time: ${totalTime}`);
+				console.log(`Average per-record Total processing time:  ${Math.round(avgTotal)}ns`);
+				console.log(`Average per-record RegExp processing time: ${record}ns`);
 
-				console.log("Per-record overhead: " + Math.round((record - totalRegexCost) / record * 10000) / 100 + "%");
+				const ratio = avgTotal / record;
+				const estimatedCost = 25 / (avgTotal - record) * avgTotal;
+
+				console.log(`RegExp ration to overhead is ${ratio.toFixed(2)}`);
+				console.log(`Rough estimate cost for 72,000 WARC campaign: $${estimatedCost.toFixed(2)}`);
+				console.log("^ this will be wildly inaccurate (low) in 'testLocal -s' mode.");
 
 				var total_mem = 0;
 				var mem = process.memoryUsage();
@@ -159,10 +192,14 @@ exports.main = function(parser) {
 				}
 
 				console.log(`${Math.round(total_mem / 1024 / 1024 * 100) / 100} MB`);
-				fs.writeFileSync('../../results/localResults.json', JSON.stringify(metrics));
+				fs.writeFileSync(`${resultsPath}localResults.json`, JSON.stringify(metrics));
 			}
 
 			success(metrics);
+		});
+
+		parser.on('error', (err) => {
+			console.log(err);
 		});
 	});
 }
@@ -192,21 +229,26 @@ function hrtime() {
 	return time[0] * 1000000000 + time[1];
 }
 
-if (process.argv.length == 3) {
-	// console.log(process.argv);
-	let warcFile = process.argv[2];
-	if (!fs.existsSync(warcFile)) {
-		console.log("Usage: " + process.argv[1] + " <file.warc>");
-		process.exit();
+function hash(what) {
+	return crypto.createHash("sha1").update(what).digest("hex");
+}
+
+if (!isLocal && !!process.argv?.[2]) {
+	if (process.argv?.[2]?.indexOf('crawl-data/') !== 0) {
+		console.log(`[!] parse_regex.js: Not isLocal, but got crawl [ ${process.argv[2]} ]`)
+		return false;
 	}
 
-	/*const warcContent = { Body: fs.readFileSync(warcFile) };
+	let warcFile = process.argv[2];
 
-	exports.main(bufferToStream(warcContent.Body)
-				.pipe(zlib.createGunzip())
-				.pipe(new WARCStreamTransform()));*/
-
-	exports.main(fs.createReadStream(warcFile)
-				.pipe(zlib.createGunzip())
+	exports.main(s3.getObject({
+						Bucket: "commoncrawl",
+						Key: warcFile
+					}).createReadStream()
+				.pipe(new zlib.Gunzip())
 				.pipe(new WARCStreamTransform()));
+
+	/*exports.main(fs.createReadStream('/tmp/warcannon.testLocal')
+				.pipe(new zlib.Gunzip())
+				.pipe(new WARCStreamTransform()));*/
 }

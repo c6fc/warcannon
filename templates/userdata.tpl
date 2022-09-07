@@ -2,28 +2,42 @@
 
 cd /root
 
-# Install NVM
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+export HOME=/root
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | /bin/bash
+[ -s "$HOME/.nvm/nvm.sh" ] && \. "/root/.nvm/nvm.sh"
+[ -s "$HOME/.nvm/bash_completion" ] && \. "/root/.nvm/bash_completion"
+
+nvm install 16.4.2
 
 yum install -y htop jq
 
-nvm install 12
-mkdir /tmp/warcannon
-chmod 777 /tmp/warcannon
+# mkdir /tmp/warcannon
+# chmod 777 /tmp/warcannon
 
-# # sudo mount -t tmpfs -o size=200g ramdisk /tmp/warcannon
-# MEMORY=`free --mega | grep Mem | awk ' { print($2) } '`
-# RAMDISK=`echo "($MEMORY * 0.6) / 1" | bc`
-# echo $RAMDISK
+#mount -t tmpfs -o size=80% ramdisk /tmp/warcannon
 
-mount -t tmpfs -o size=80% ramdisk /tmp/warcannon
-wget `aws --region us-east-1 lambda get-function --function-name warcannon | jq -r '.Code.Location'` -O function.zip
-unzip function.zip
-npm install
+# mkfs.ext4 /dev/nvme2n1
+# mount /dev/nvme2n1 /tmp/warcannon
 
-# node warcannon.js crawl-data/CC-MAIN-2020-10/warc.paths.gz 1 56000 1 warc-results
-node warcannon.js ${results_bucket} ${sqs_queue_url} ${parallelism_factor}
+cat <<- EOF > warcannon.sh
+	#! /bin/bash
 
-# aws --region us-east-1 lambda invoke --function-name cc_loader --payload '{"crawl":"CC-MAIN-2020-34","chunk":4,"max":10}' /dev/stdout
+	[ -s "$HOME/.nvm/nvm.sh" ] && \. "/root/.nvm/nvm.sh"
+	[ -s "$HOME/.nvm/bash_completion" ] && \. "/root/.nvm/bash_completion"
+
+	rm -f function.zip
+	wget \$(aws --region us-east-1 lambda get-function --function-name warcannon | jq -r '.Code.Location') -O function.zip
+	
+	rm -Rf warcannon
+	unzip function.zip -d warcannon
+	cd warcannon
+
+	# rm -f /tmp/warcannon
+
+	npm install
+
+	node ./yargs.js fire ${results_bucket} ${sqs_queue_url} ${parallelism_factor}
+EOF
+
+chmod +x warcannon.sh
+./warcannon.sh

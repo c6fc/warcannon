@@ -14,16 +14,31 @@ With WARCannon, you can:
 
 WARCannon leverages clever use of AWS technologies to horizontally scale to any capacity, minimize cost through spot fleets and same-region data transfer, draw from S3 at incredible speeds (up to 100Gbps per node), parallelize across hundreds of CPU cores, report status via DynamoDB and CloudFront, and store results via S3.
 
-In all, WARCannon can process multiple regular expression patterns across 400TB in a few hours for around $100.
+In all, WARCannon can process multiple regular expression patterns across 400TB in a few hours for around $30.
 
-## Installation
+## CloudShell Installation
+
+The fastest and easiest way to get up and running is to use the AWS CloudShell. Just paste this one-liner:
+
+```sh
+source <(curl https://raw.githubusercontent.com/c6fc/warcannon/master/cloudshell/deploy.sh)
+```
+
+If you want to use a non-master branch of WARCannon, just type:
+
+```sh
+export GIT_BRANCH=branch_name
+source <(curl https://raw.githubusercontent.com/c6fc/warcannon/$GIT_BRANCH/cloudshell/deploy.sh)
+```
+
+**Note: CloudShell deployment uses ephemeral storage, which means custom regex patterns will be lost when the CloudShell exits. If you are going to use WARCannon frequently, I recommend using the 'Local Installation' below.**
+
+## Local Installation
 
 WARCannon requires that you have the following installed: 
 * **awscli** (v2)
-* **terraform** (v0.11)
-* **jq**
-* **jsonnet**
-* **npm** (v12 or v14)
+* **cmake3**
+* **node.js** (v17.0.1+)
 
 **ProTip:** To keep things clean and distinct from other things you may have in AWS, it's STRONGLY recommended that you deploy WARCannon in a fresh account. You can create a new account easily from the 'Organizations' console in AWS. **By 'STRONGLY recommended', I mean 'seriously don't install this next to other stuff'.**
 
@@ -37,19 +52,39 @@ warcannon$ cp settings.json.sample settings.json
 
 Edit `settings.json` to taste:
 
-* `backendBucket`: Is the bucket to store the terraform state in. If it doesn't exist, WARCannon will create it for you. Replace '< somerandomcharacters >' with random characters to make it unique, or specify another bucket you own.
-* `awsProfile`: The profile name in `~/.aws/credentials` that you want to piggyback on for the installation.
-
+**Required settings**
 * `nodeInstanceType`: An array of instance types to use for parallel processing. 'c'-types are best value for this purpose, and any size can be used. `["c5n.18xlarge"]` is the recommended value for true campaigns.
 * `nodeCapacity`: The number of nodes to request during parallel processing. The resulting nodes will be an arbitrary distribution of the `nodeInstanceTypes` you specify.
 * `nodeParallelism`: The number of simultaneous WARCs to process *per vCPU*. `2` is a good number here. If nodes have insufficient RAM to run at this level of parallelism (as you might encounter with 'c'-type instances), they'll run at the highest safe parallelism instead.
 * `nodeMaxDuration`: The maximum lifespan of compute nodes in seconds. Nodes will be automatically terminated after this time if the job has still not completed. Default value is 24 hours.
-* `sshPubkey`: A public SSH key to facilitate remote access to nodes for troubleshooting.
+
+**Optional settings (leave them out entirely if unused)**
+* `sshKeyName`: The name of an EC2 SSH Key that already exists in us-east-1.
 * `allowSSHFrom`: A CIDR mask to allow SSH from. Typically this will be `&lt;yourpublicip&gt;/32`
 
-## Grepping the Internet
+To install, run this:
+```sh
+$ npm install
+$ npm link
+$ warcannon deploy
+```
 
-WARCannon is fed by [Common Crawl](https://commoncrawl.org/) via the [AWS Open Data](https://registry.opendata.aws/) program. Common Crawl is unique in that the data retrieved by their spiders not only captures website text, but also other text-based content like JavaScript, TypeScript, full HTML, CSS, etc. By constructing suitable Regular Expressions capable of identifying unique components, researchers can identify websites by the technologies they use, and do so without ever touching the website themselves. The problem is that this requires parsing hundreds of terabytes of data, which is a tall order no matter what resources you have at your disposal.
+## Quick Start
+
+Running a campaign in WARCannon uses a simple, easy-to-follow workflow that can be best described in these few steps:
+1. Deploy the infrastructure: `warcannon deploy`
+2. Develop, then test regex patterns locally: `warcannon testLocal -s`
+3. Verify regex patterns in AWS via Lambda: `warcannon test`
+4. Show available crawls: `warcannon list 2022`
+5. Populate the queue with the crawl of your choice: `warcannon populate 2022-21`
+6. Execute the campaign: `warcannon fire`
+7. Wait for the campaign to finish, then retrieve the results from S3 with `warcannon syncResults`
+
+Read on for a more detailed understanding of each step.
+
+## Using WARCannon
+
+WARCannon is fed by [Common Crawl](https://commoncrawl.org/) via the [AWS Open Data](https://registry.opendata.aws/) program. Common Crawl is unique in that the data retrieved by their spiders not only captures website text, but also other text-based content like JavaScript, TypeScript, full HTML, CSS, etc. By constructing suitable Regular Expressions capable of identifying unique components, researchers can identify websites by the technologies they use, and do so without ever touching the website themselves. The problem is that this requires parsing hundreds of terabytes of data, which is a tall order no matter what resources you have at your disposal. Fortunately WARCannon has several tools you can use to get this done!
 
 ### Developing Regular Expressions
 
@@ -71,12 +106,12 @@ exports.domains = ["example1.com", "example2.com"];
 
 Once the `matches.js` is populated, run the following command:
 ```bash
-warcannon$ ./warcannon testLocal <warc_path>
+warcannon$ warcannon testLocal -s
 ```
 
-WARCannon will then download the warc and parse it with your configured matches. There are a few quality-of-life things that WARCannon does by default that you should be aware of:
-1. WARCannon will download the warc to `/tmp/warcannon.testLocal` on first run, and will re-use the downloaded warc from then on even if you change the warc_path. If you wish to use a different warc, you must delete this file.
-2. WARCs are large; most coming in at just over 1GB. WARCannon uses the CLI for multi-threaded downloads, but if you have slow internet, you'll need to exercise patience the first time around.
+You can optionally add a path to a WARC in the `commoncrawl` S3 bucket if you'd like, but a hardcoded default will be used otherwise.
+
+WARCannon will stream process the WARC file (or download it entirely if you omit `-s`) to find your configured matches. WARCannon will save the results to the `~/.warcannon/` folder when you interrupt with `ctrl+c` or when the processing finishes. This makes it easy to test common matches very rapidly with minimal bandwidth.
 
 On top of everything else, WARCannon will attempt to evaluate the total compute cost of your regular expressions when run locally. This way, you can be informed if a given regular expression will significantly impact performance *before* you execute your campaign.
 
@@ -108,9 +143,11 @@ exports.custom_functions = {
 
 The costs of AWS can be anxiety-inducing, especially when you're only looking to do some research. WARCannon is built to allow both one-off executions in addition to full campaigns, so you can be confident in the results you'll get back. Once you're happy with the results you get with `testLocal`, you can deploy your updated matches and run a cloud-backed test easily:
 ```bash
-warcannon$ ./warcannon deploy
-warcannon$ ./warcannon test <warc_path>
+warcannon$ warcannon deploy
+warcannon$ warcannon test
 ```
+
+Again, you can optionally include a WARC Path if you'd like, though it's not required.
 
 This will synchronously execute a Lambda function with the regular expressions you've configured, and immediately return the results. This process takes about 2.5 minutes, so don't be afraid to wait while it does its magic.
 
@@ -122,13 +159,13 @@ Once you're happy with the results you get in Lambda, you're ready to grep the i
 
 WARCannon uses AWS Simple Queue Service to distribute work to the compute nodes. To ensure that your results aren't tainted with any prior runs, you can tell WARCannon to empty the queue:
 ```bash
-warcannon$ ./warcannon emptyQueue
+warcannon$ warcannon emptyQueue
 [+] Cleared [ 15 ] messages from the queue
 ```
 
 You can then verify the state of the queue:
 ```bash
-warcannon$ ./warcannon status
+warcannon$ warcannon status
 	Deployed: [ YES ]; SQS Status: [ EMPTY ]
 	Job Status: [ INACTIVE ]
 	Active job url: https://d201offlnmhkmd.cloudfront.net
@@ -142,7 +179,7 @@ Verify the following before proceeding:
 
 In order to create the queue messages that the compute nodes will consume, you must first populate SQS with crawl data. WARCannon has several commands to help with this, starting with the ability to show the available scans. In this case, let's look at the scans available for the year 2021:
 ```bash
-warcannon$ ./warcannon list 2021
+warcannon$ warcannon list 2021
 CC-MAIN-2021-04
 CC-MAIN-2021-10
 ```
@@ -150,7 +187,7 @@ CC-MAIN-2021-10
 We have two scans matching the string "2021" to work with. We can now instruct WARCannon to populate the queue based on one of these scans. This time, we need to provide a parameter that uniquely identifies one of the scans. "2021-04" will do the trick. We could choose to populate only a partial scan by also specifying a number of chunks and a chunk size, but we'll skip that for now.
 
 ```bash
-warcannon$ ./warcannon populate 2021-04
+warcannon$ warcannon populate 2021-04
 {Created 799 chunks of 100 from 79840 available segments"
     "StatusCode": 200,
     "ExecutedVersion": "$LATEST"
@@ -178,7 +215,7 @@ ORDER BY num DESC
 You can use the Athena console to fine-tune your results, but you must run the query from the WARCannon command line if you intend to populate a job with it:
 
 ```bash
-./warcannon queryAthena "SELECT warc_filename, COUNT(url_path) as num FROM warcannon_commoncrawl.ccindex WHERE subset = 'warc' AND url_host_registered_domain IN ('example.com') AND crawl = 'CC-MAIN-2021-04' GROUP BY warc_filename ORDER BY num DESC"
+warcannon queryAthena "SELECT warc_filename, COUNT(url_path) as num FROM warcannon_commoncrawl.ccindex WHERE subset = 'warc' AND url_host_registered_domain IN ('example.com') AND crawl = 'CC-MAIN-2021-04' GROUP BY warc_filename ORDER BY num DESC"
 
 [+] Query Exec Id: 0319486e-1846-491c-badf-2e23ae213974 .. SUCCEEDED
 
@@ -187,7 +224,7 @@ You can use the Athena console to fine-tune your results, but you must run the q
 WARCannon can then use the results of a query to populate the queue, and does so based on the `warc_filename` column from the resultset. As such, it's recommended that you either `group by` this column or use `distinct()` to avoid duplicates. WARCannon will throw an error if this field isn't present. Populate the queue with Athena results by passing the Query Execution ID to the `populateAthena` command.
 
 ```bash
-./warcannon populateAthena 0319486e-1846-491c-badf-2e23ae213974
+warcannon populateAthena 0319486e-1846-491c-badf-2e23ae213974
 
 {Created 26 chunks of 10 from 251 available segments"
     "StatusCode": 200,
@@ -202,11 +239,11 @@ WARCannon can then use the results of a query to populate the queue, and does so
 With the queue populated, we're ready to fire. WARCannon will do a few sanity checks to ensure everything is in order, then show you the configuration of the campaign and give you one last opportunity to abort before you finalize the order.
 
 ```bash
-warcannon$ ./warcannon fire
+warcannon$ warcannon fire
 [!] This will request [ 6 ] spot instances of type [ m5n.24xlarge, m5dn.24xlarge ]
     lasting for [ 86400 ] seconds.
 
-To change this, edit your settings in settings.json and run ./warcannon deploy
+To change this, edit your settings in settings.json and run warcannon deploy
 --> Ready to fire? [Yes]: 
 ```
 
@@ -227,10 +264,10 @@ The response includes a link to your unique status URL, where you can monitor th
 
 #### Obtaining Results
 
-WARCannon results are stored in S3 in JSON format, broken down by each node responsible for producing the results. Athena results are stored in the same bucket under the `/athena/` prefix. You can sync the results of a campaign to the `./warcannon/results/` folder on your local machine using the `syncResults` command.
+WARCannon results are stored in S3 in JSON format, broken down by each node responsible for producing the results. Athena results are stored in the same bucket under the `/athena/` prefix. You can sync the results of a campaign to the `~/.warcannon/` folder on your local machine using the `syncResults` command.
 
 ```bash
-./warcannon syncResults
+warcannon syncResults
 
 sync: s3://warcannon-results-202...
 sync: s3://warcannon-results-202...
@@ -241,7 +278,7 @@ sync: s3://warcannon-results-202...
 You can then empty the results buckets with `clearResults`
 
 ```bash
-./warcannon clearResults
+warcannon clearResults
 
 delete: s3://warcannon-results-202...
 delete: s3://warcannon-results-202...
