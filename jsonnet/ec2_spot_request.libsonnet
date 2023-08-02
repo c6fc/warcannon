@@ -5,8 +5,8 @@ local json(capacity, instanceTypes, subnets, key) = {
     TerminateInstancesWithExpiration: true,
     LaunchSpecifications: [
         {
-            //ImageId: "ami-06b8f0fe534eceb95", //ARM
-            ImageId: "ami-0947d2ba12ee1ff75", //x86
+            ImageId: "ami-06b8f0fe534eceb95", //ARM
+            // ImageId: "ami-0947d2ba12ee1ff75", //x86
             InstanceType: instanceType,
             KeyName: key,
             BlockDeviceMappings: [
@@ -14,7 +14,8 @@ local json(capacity, instanceTypes, subnets, key) = {
                     DeviceName: "/dev/sda1",
                     Ebs: {
                         DeleteOnTermination: true,
-                        SnapshotId: "snap-0299d083f0ce6cd12",
+                        SnapshotId: "snap-03d46705db42dbe81", //ARM
+                        // SnapshotId: "snap-0299d083f0ce6cd12", //x86
                         VolumeSize: 8,
                         Encrypted: false,
                         VolumeType: "gp2"

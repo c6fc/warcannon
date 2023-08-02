@@ -341,8 +341,8 @@ local availabilityzones = aws.getAvailabilityZones()['us-east-1'];
 		timeout: 600,
 		memory_size: 3008,
 
-		runtime: "provided",
-		layers: ["arn:aws:lambda:us-east-1:072686360478:layer:node-16_4_2:3"],
+		runtime: "nodejs16.x",
+		layers:: ["arn:aws:lambda:us-east-1:072686360478:layer:node-16_4_2:3"],
 
 		environment: {
 			variables: {
@@ -382,7 +382,7 @@ local availabilityzones = aws.getAvailabilityZones()['us-east-1'];
 			required_providers: {
 				aws: {
 					source: "hashicorp/aws",
-					version: "~> 3.75.1"
+					version: "~> 3.76.1"
 				},
 				archive: {
 					source: "hashicorp/archive",
