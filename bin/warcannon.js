@@ -185,6 +185,31 @@ const resultsPath = `${os.homedir()}/.warcannon/`;
 			console.log(`[!] Loader failed with code [${loader.StatusCode}]:\n${loader.Payload.toString()}`.red);
 			return false;
 		})
+		.command("createAthena", "Creates and initializes tables for Athena queries", (yargs) => yargs, async (argv) => {
+			console.log('[*] Creating Athena table...'.blue);
+
+			const athena = new aws.Athena({ region: "us-east-1" });
+
+			await athena.startQueryExecution({
+				QueryString: "CREATE EXTERNAL TABLE IF NOT EXISTS ccindex (url_surtkey STRING, url STRING, url_host_name STRING, url_host_tld STRING, url_host_2nd_last_part STRING, url_host_3rd_last_part STRING, url_host_4th_last_part STRING, url_host_5th_last_part STRING, url_host_registry_suffix STRING, url_host_registered_domain STRING, url_host_private_suffix STRING, url_host_private_domain STRING, url_protocol STRING, url_port INT, url_path STRING, url_query STRING, fetch_time TIMESTAMP, fetch_status SMALLINT, content_digest STRING, content_mime_type STRING, content_mime_detected STRING, content_charset STRING, content_languages STRING, warc_filename STRING, warc_record_offset INT, warc_record_length INT, warc_segment STRING) PARTITIONED BY (crawl STRING, subset STRING) STORED AS parquet LOCATION 's3://commoncrawl/cc-index/table/cc-main/warc/';",
+				QueryExecutionContext: {
+					Database: "warcannon_commoncrawl"
+				},
+				WorkGroup: "warcannon"
+			}).promise();
+
+			console.log('[*] Initializing Athena table...'.blue);
+
+			await athena.startQueryExecution({
+				QueryString: "MSCK REPAIR TABLE ccindex",
+				QueryExecutionContext: {
+					Database: "warcannon_commoncrawl"
+				},
+				WorkGroup: "warcannon"
+			}).promise();
+
+			console.log('[+] Table created...'.green);
+		})
 		.command("populateAthena <executionId>", "Populates a job based on a previous Athena query.", (yargs) => yargs, async (argv) => {
 			console.log('[*] Loading job. Please wait...'.blue);
 
@@ -193,7 +218,7 @@ const resultsPath = `${os.homedir()}/.warcannon/`;
 				InvocationType: "RequestResponse",
 				LogType: "None",
 				Payload: JSON.stringify({
-					QueryExecutionId: argv.executionId
+					queryExecutionId: argv.executionId
 				})
 			}).promise();
 
