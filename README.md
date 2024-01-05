@@ -289,6 +289,6 @@ delete: s3://warcannon-results-202...
 
 # Official Discord Channel
 
-Come hang out on Discord!
+Have questions, need help, want to contribute or brag about a win? Come hang out on Discord!
 
-[![Porchetta Industries](https://discordapp.com/api/guilds/736724457258745996/widget.png?style=banner3)](https://discord.gg/7SDYBs65Zp)
+[![Official c6fc Discord](https://discordapp.com/api/guilds/825770240309985310/widget.png?style=banner3)](https://discord.gg/w4G5k92czX)
