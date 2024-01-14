@@ -28,7 +28,7 @@
     "@c6fc/sonnetry": "^2.2.0",
     "@colors/colors": "^1.5.0",
     "@jahed/terraform": "^0.15.5",
-    "aws-sdk": "^2.1048.0",
+    "aws-sdk": "^2.1354.0",
     "yargs": "^17.3.1"
   }
 }
