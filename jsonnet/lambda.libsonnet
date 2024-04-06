@@ -2,7 +2,7 @@ local lambda_function(name, config, role_policy) = {
 	resource: {
 		aws_lambda_function: {
 			[name]: {
-				runtime: "nodejs14.x",
+				runtime: "nodejs18.x",
 			} + config + {
 				function_name: name,
 				filename: "../lambda_functions/zip_files/" + name + ".zip",
