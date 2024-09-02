@@ -5,7 +5,7 @@
   "main": "warcannon.js",
   "dependencies": {
     "@colors/colors": "^1.5.0",
-    "aws-sdk": "^2.648.0",
+    "aws-sdk": "^2.1354.0",
     "cli-progress": "^3.6.1",
     "glob": "^7.1.6",
     "minizlib": "^2.1.2",
